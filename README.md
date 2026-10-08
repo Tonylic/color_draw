@@ -4,6 +4,14 @@ A color-by-number iPhone and iPad game for kids. Snap a photo or pick one from y
 and Color Draw turns it into a numbered coloring page. Each number is a paint color, and
 little fingers tap or drag over the shapes to fill them in.
 
+<p>
+  <img src="docs/screenshots/home.png" width="180" alt="Home screen">
+  <img src="docs/screenshots/create.png" width="180" alt="Choosing how tricky a photo puzzle is">
+  <img src="docs/screenshots/paint-start.png" width="180" alt="A new picture: the shapes to paint are striped">
+  <img src="docs/screenshots/painting.png" width="180" alt="Painting, zoomed in">
+  <img src="docs/screenshots/celebration.png" width="180" alt="Finished!">
+</p>
+
 ## What kids can do
 
 - **Use any picture**: take a photo with the camera, pick one from Photos, or start with one of
@@ -16,8 +24,9 @@ little fingers tap or drag over the shapes to fill them in.
   tap wiggles the paint pot that's needed, and tapping the same shape again hands that pot over.
 - **Zoom so numbers are clear**: pinch with two fingers or use the **+ / − / fit** buttons.
   Numbers are drawn as vector text, so they stay sharp at every zoom level. Tiny numbers
-  appear as you zoom in. Kids who can't manage two-finger panning can switch the 🖌 button to
-  ✋, so one finger moves the picture.
+  appear as you zoom in. When zoomed in, a drag that starts on a shape you can't paint moves
+  the picture. Kids who can't manage two fingers can also switch from 🖌 to ✋, so every
+  one-finger drag moves the picture.
 - **Get help**: a spoken tip and a pulsing shape show how to start. The 💡 button jumps to the
   next shape of the chosen color and makes it pulse. After a quiet spell it wiggles by itself,
   and if a child stays stuck it finds a shape for them.
@@ -25,11 +34,12 @@ little fingers tap or drag over the shapes to fill them in.
   earns a cheer from Dotty the paint drop and moves on to the next color by itself. Finishing the
   picture brings confetti, three stars and a **Save to Photos** button.
 - **Come back later**: paintings save automatically and show up under *My Paintings* with
-  their progress. The ⭐ button on a finished painting brings back its celebration and
-  **Save to Photos** button. Grown-ups can delete a painting by long-pressing it.
+  their progress. The 🎉 button on a finished painting brings back its celebration and its
+  **Save** button. Grown-ups can delete a painting by long-pressing it.
 
-Everything happens on the device. There's no network access, no accounts, no ads and no in-app
-purchases.
+Everything happens on the device. There's no network access, no accounts, no ads, no in-app
+purchases and no buttons that lead out of the app. It respects VoiceOver, Dynamic Type and
+Reduce Motion, and its sounds follow the silent switch.
 
 ## How a photo becomes a puzzle
 
