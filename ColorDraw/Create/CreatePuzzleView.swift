@@ -59,6 +59,7 @@ struct CreatePuzzleView: View {
     @State private var generators: [Difficulty: Task<Preview?, Never>] = [:]
     @State private var isCreating = false
     @State private var showError = false
+    @State private var showSaveError = false
 
     private struct Preview {
         let puzzle: Puzzle
@@ -122,6 +123,11 @@ struct CreatePuzzleView: View {
             Button("OK", role: .cancel) { dismiss() }
         } message: {
             Text("That picture didn't work. Please try another one.")
+        }
+        .alert("Couldn't save", isPresented: $showSaveError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("There's no room to save a new painting. Is the device full?")
         }
     }
 
@@ -212,8 +218,9 @@ struct CreatePuzzleView: View {
                 let artwork = try await store.create(puzzle: puzzle, title: title, level: difficulty.rawValue, sampleID: nil, thumbnail: thumbnail)
                 onCreated(artwork.id)
             } catch {
+                // Keep the sheet (and the child's photo) so they can try again.
                 isCreating = false
-                showError = true
+                showSaveError = true
             }
         }
     }

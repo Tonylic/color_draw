@@ -112,6 +112,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         effectsView.frame = bounds
         guard bounds.width > 0, bounds.height > 0, bounds.size != laidOutSize else { return }
         laidOutSize = bounds.size
+        focusMarker?.removeFromSuperview()
 
         // At zoom 1 the whole picture fits on screen, above the zoom buttons.
         var available = bounds.insetBy(dx: 14, dy: 14).size
@@ -197,6 +198,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             let isZoomedIn = scrollView.zoomScale > 1.05
             let startsOnPaint = regions(near: start, radius: brushRadius / scrollView.zoomScale).contains(where: session.canPaint(region:))
             if isMoveMode || (isZoomedIn && !startsOnPaint) {
+                // Catch the picture where it is if it's still gliding from the last drag.
+                if let gliding = scrollView.layer.presentation()?.bounds.origin {
+                    scrollView.layer.removeAllAnimations()
+                    scrollView.contentOffset = gliding
+                }
                 panStartOffset = scrollView.contentOffset
             }
         }
@@ -332,6 +338,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func zoomToFit() {
+        focusMarker?.removeFromSuperview()
         scrollView.setZoomScale(1, animated: true)
     }
 
@@ -417,6 +424,8 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     private func zoom(to center: CGPoint, scale: CGFloat, completion: ((Bool) -> Void)? = nil) {
+        // The marker sits in screen space, so it can't stay once the picture moves.
+        focusMarker?.removeFromSuperview()
         let size = CGSize(width: scrollView.bounds.width / scale, height: scrollView.bounds.height / scale)
         let rect = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
@@ -477,7 +486,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     /// A pulsing ring around a shape the child should paint next. It is also an accessibility
     /// element, so VoiceOver users can paint the shape by double-tapping it.
-    private func showFocusMarker(on region: Int, showsHand: Bool = false) {
+    private func showFocusMarker(on region: Int, showsHand: Bool = false, movesVoiceOverFocus: Bool = true) {
         focusMarker?.removeFromSuperview()
         let marker = FocusMarkerView(number: puzzle.regions[region].colorIndex + 1, showsHand: showsHand) { [weak self] in
             self?.session.paint(region: region, isTap: true)
@@ -485,7 +494,9 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         marker.center = contentView.convert(labelPoint(of: region), to: effectsView)
         effectsView.addSubview(marker)
         focusMarker = marker
-        UIAccessibility.post(notification: .layoutChanged, argument: marker)
+        if movesVoiceOverFocus {
+            UIAccessibility.post(notification: .layoutChanged, argument: marker)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + FocusMarkerView.lifetime) { [weak marker] in
             marker?.removeFromSuperview()
         }

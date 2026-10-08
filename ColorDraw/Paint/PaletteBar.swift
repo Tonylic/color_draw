@@ -35,6 +35,7 @@ struct PaletteBar: View {
                 // Centered when all the pots fit (e.g. on iPad).
                 .frame(minWidth: width)
             }
+            .accessibilityIdentifier("palette")
             // Fade the edges when there are more pots than fit, so children see they can scroll.
             .mask {
                 if contentWidth > width + 1 {

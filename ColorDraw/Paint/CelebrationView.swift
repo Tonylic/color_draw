@@ -35,9 +35,12 @@ struct CelebrationView: View {
             .scaleEffect(appeared ? 1 : 0.6)
             .opacity(appeared ? 1 : 0)
         }
+        // VoiceOver stays inside the card while it's showing.
+        .accessibilityAddTraits(.isModal)
         .onAppear {
             finished = session.snapshot(width: 1600)
             withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.65)) { appeared = true }
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
         }
         .alert("Ask a grown-up", isPresented: $showPermissionHelp) {
             Button("OK", role: .cancel) {}

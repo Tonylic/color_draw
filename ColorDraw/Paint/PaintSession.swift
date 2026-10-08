@@ -46,6 +46,8 @@ final class PaintSession {
     private(set) var showsCelebration = false
     /// Changes when the child seems stuck, to make the light-bulb button wiggle.
     private(set) var helpNudge = 0
+    /// Set when progress couldn't be saved (say, the device is full); cleared by the next good save.
+    private(set) var saveFailed = false
     /// One finger moves the picture instead of painting.
     var isMoveMode = false {
         didSet { canvas?.setMoveMode(isMoveMode) }
@@ -55,6 +57,7 @@ final class PaintSession {
     @ObservationIgnored private let store: ArtworkStore
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var cheerTask: Task<Void, Never>?
+    @ObservationIgnored private var celebrationTask: Task<Void, Never>?
     @ObservationIgnored private var cheerCount = 0
     @ObservationIgnored private var hintCount = 0
     @ObservationIgnored private var hasUnsavedChanges = false
@@ -93,6 +96,7 @@ final class PaintSession {
             // Nothing left to paint with this pot: it wiggles "all done!" instead.
             hintCount += 1
             hintTokens[color] = hintCount
+            hintedColor = color
             Haptics.select()
             return
         }
@@ -187,9 +191,11 @@ final class PaintSession {
             if canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == false {
                 canvas?.zoomToFit()
             }
+            // Pointing would keep moving VoiceOver's focus around; VoiceOver users have Find.
+            guard !UIAccessibility.isVoiceOverRunning else { break }
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(0.5))
-                guard let self, let region = canvas?.nearestUnpaintedRegion(of: selectedColor) else { return }
+                guard (try? await Task.sleep(for: .seconds(0.5))) != nil,
+                      let self, let region = canvas?.nearestUnpaintedRegion(of: selectedColor) else { return }
                 canvas?.point(at: region)
             }
         case 3:
@@ -219,11 +225,33 @@ final class PaintSession {
         saveTask?.cancel()
         saveTask = nil
         guard hasUnsavedChanges else { return }
-        // On failure the changes stay marked unsaved, so the next save tries again.
-        if store.saveProgress(artworkID, filledRegions: progress.filledRegions, isComplete: progress.isComplete, thumbnail: snapshot(width: 360)) {
+        let saved = store.saveProgress(
+            artworkID,
+            filledRegions: progress.filledRegions,
+            regionCount: progress.regionCount,
+            isComplete: progress.isComplete,
+            thumbnail: { [weak self] in self?.snapshot(width: 360) }
+        )
+        saveFailed = !saved
+        if saved {
             hasUnsavedChanges = false
             unsavedSince = nil
+        } else {
+            // Keep the changes marked unsaved and try again in a little while, rather than on
+            // every stroke.
+            unsavedSince = Date()
+            saveTask = Task { [weak self] in
+                guard (try? await Task.sleep(for: .seconds(5))) != nil else { return }
+                self?.saveNow()
+            }
         }
+    }
+
+    /// Stops pending work when the painting screen goes away.
+    func tearDown() {
+        saveNow()
+        celebrationTask?.cancel()
+        cheerTask?.cancel()
     }
 
     private func markUnsaved() {
@@ -244,8 +272,7 @@ final class PaintSession {
         }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
+            guard (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
             self?.saveNow()
         }
     }
@@ -272,19 +299,20 @@ final class PaintSession {
         canvas?.zoomToFit()
         isMoveMode = false
         saveNow()
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(0.7))
+        celebrationTask = Task { [weak self] in
+            guard (try? await Task.sleep(for: .seconds(0.7))) != nil else { return }
             self?.showsCelebration = true
             SoundPlayer.shared.say("You did it!")
+            UIAccessibility.post(notification: .announcement, argument: "You did it! The picture is finished.")
         }
     }
 
     private func showCheer(_ text: String) {
         cheer = Cheer(id: cheerCount, text: text)
         cheerTask?.cancel()
+        UIAccessibility.post(notification: .announcement, argument: text)
         cheerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
+            guard (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
             self?.cheer = nil
         }
     }

@@ -37,10 +37,10 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(marker.waitForExistence(timeout: 3))
         let needed = Int(marker.label.split(separator: " ").last ?? "") ?? 1
         let other = needed == 1 ? 2 : 1
-        pot(other).tap()
+        tapPot(other)
         marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertEqual(progressValue, "0 percent painted")
-        pot(needed).tap()
+        tapPot(needed)
 
         // Find each shape and paint it, until the picture is done.
         let celebration = app.staticTexts["You did it!"]
@@ -78,7 +78,7 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         // Sweep a finger across the whole picture with every color selected in turn.
         for color in 1...12 where pot(color).exists {
-            pot(color).tap()
+            tapPot(color)
             for row in stride(from: 0.1, through: 0.9, by: 0.2) {
                 canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: row))
                     .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: row)))
@@ -164,6 +164,20 @@ final class ColorDrawUITests: XCTestCase {
     /// A paint pot, labelled like "Color 3, orange".
     private func pot(_ number: Int) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Color \(number),")).firstMatch
+    }
+
+    /// Taps a paint pot, scrolling the palette first if the pot is off screen. Taps by coordinate,
+    /// since pots under the palette's faded edges have no usable accessibility activation point.
+    private func tapPot(_ number: Int) {
+        let pot = pot(number)
+        let palette = app.scrollViews["palette"]
+        let screen = app.windows.firstMatch.frame.insetBy(dx: 40, dy: 0)
+        for _ in 0..<4 where !screen.contains(CGPoint(x: pot.frame.midX, y: pot.frame.midY)) {
+            if pot.frame.midX > screen.maxX { palette.swipeLeft() } else { palette.swipeRight() }
+        }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: pot.frame.midX, dy: pot.frame.midY))
+            .tap()
     }
 
     private var progressValue: String {

@@ -327,6 +327,10 @@ private struct ArtworkCard: View {
     let artwork: ArtworkMetadata
     let thumbnail: UIImage?
 
+    private var percent: Int {
+        artwork.regionCount == 0 ? 0 : artwork.filledRegions.count * 100 / artwork.regionCount
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             ZStack {
@@ -349,7 +353,7 @@ private struct ArtworkCard: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(artwork.title)
-        .accessibilityValue(artwork.isComplete ? "Finished" : "\(Int(artwork.fraction * 100)) percent painted")
+        .accessibilityValue(artwork.isComplete ? "Finished" : "\(percent) percent painted")
         .accessibilityHint("Opens the painting")
     }
 
@@ -370,7 +374,7 @@ private struct ArtworkCard: View {
                     .stroke(Theme.green, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .padding(4)
-                Text("\(Int(artwork.fraction * 100))")
+                Text("\(percent)")
                     .font(.system(size: 12, weight: .black, design: .rounded))
                     .foregroundStyle(Theme.ink)
             }

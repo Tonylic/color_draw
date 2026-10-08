@@ -15,7 +15,7 @@ struct PaintScreen: View {
             Theme.background.ignoresSafeArea()
             if let session {
                 PaintView(session: session) {
-                    session.saveNow()
+                    session.tearDown()
                     dismiss()
                 }
                 .transition(.opacity)
@@ -92,6 +92,19 @@ struct PaintView: View {
                 PaletteBar(session: session)
             }
 
+            if session.saveFailed {
+                Label("Couldn't save your painting. Is the device full?", systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.font(.footnote, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.ink.opacity(0.85)))
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 70)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
             if session.showsCelebration {
                 CelebrationView(session: session, onHome: onClose)
                     .transition(.opacity)
@@ -102,22 +115,20 @@ struct PaintView: View {
         .animation(.easeInOut(duration: 0.3), value: session.showsCelebration)
         .task {
             SoundPlayer.shared.prepare()
-            try? await Task.sleep(for: .seconds(0.8))
+            guard (try? await Task.sleep(for: .seconds(0.8))) != nil else { return }
             session.showStartHint()
             // Say the first tip out loud for children who can't read yet (only the first few times).
             if showsStartTip && startTipsSpoken < 3 && SoundPlayer.shared.say(Self.startTip) {
                 startTipsSpoken += 1
             }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+            while (try? await Task.sleep(for: .seconds(2))) != nil {
                 session.nudgeIfIdle()
             }
         }
         .task(id: tipShowing) {
             // The tip gives the controls their place back after a while, painted or not.
-            guard tipShowing else { return }
-            try? await Task.sleep(for: .seconds(8))
-            if !Task.isCancelled { startTipExpired = true }
+            guard tipShowing, (try? await Task.sleep(for: .seconds(8))) != nil else { return }
+            startTipExpired = true
         }
         .onChange(of: session.helpNudge) {
             // Still nothing painted after a while: show the tip again.
@@ -126,7 +137,7 @@ struct PaintView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.saveNow() }
         }
-        .onDisappear { session.saveNow() }
+        .onDisappear { session.tearDown() }
     }
 
     private static let startTip = "Tap the striped shapes!"
@@ -149,7 +160,7 @@ struct PaintView: View {
             .buttonStyle(RoundIconButtonStyle())
             .accessibilityLabel("Home")
 
-            ProgressPill(fraction: session.progress.fraction)
+            ProgressPill(painted: session.progress.filledCount, total: session.progress.regionCount)
 
             if session.isComplete {
                 Button {
@@ -282,7 +293,12 @@ private struct PillIconButtonStyle: ButtonStyle {
 
 /// A chunky rainbow progress bar with a star at the end.
 struct ProgressPill: View {
-    let fraction: Double
+    let painted: Int
+    let total: Int
+
+    private var fraction: Double { total == 0 ? 1 : Double(painted) / Double(total) }
+    /// Whole percent, computed in integers so 29 of 100 shows 29%, not 28%.
+    private var percent: Int { total == 0 ? 100 : painted * 100 / total }
 
     var body: some View {
         GeometryReader { geometry in
@@ -295,7 +311,7 @@ struct ProgressPill: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.7), value: fraction)
                 HStack {
                     Spacer()
-                    Text("\(Int((fraction * 100).rounded(.down)))%")
+                    Text("\(percent)%")
                         .font(Theme.font(.headline))
                         .foregroundStyle(Theme.ink)
                         .padding(.horizontal, 10)
@@ -312,7 +328,7 @@ struct ProgressPill: View {
         .background(Capsule().fill(Color.black.opacity(0.1)).offset(y: 4))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Progress")
-        .accessibilityValue("\(Int(fraction * 100)) percent painted")
+        .accessibilityValue("\(percent) percent painted")
     }
 }
 

@@ -76,11 +76,13 @@ final class ArtworkStore {
     }
 
     /// Records painting progress. The small metadata file is written right away; the thumbnail
-    /// is encoded and written in the background. Returns `false` if the progress couldn't be saved.
+    /// (only rendered once the metadata is safely saved) is encoded and written in the
+    /// background, in order. Returns `false` if the progress couldn't be saved.
     @discardableResult
-    func saveProgress(_ id: UUID, filledRegions: [Int], isComplete: Bool, thumbnail: UIImage?) -> Bool {
+    func saveProgress(_ id: UUID, filledRegions: [Int], regionCount: Int, isComplete: Bool, thumbnail: () -> UIImage?) -> Bool {
         guard let repository, var metadata = artwork(id) else { return false }
         metadata.filledRegions = filledRegions
+        metadata.regionCount = regionCount
         metadata.updatedAt = Date()
         if isComplete, metadata.completedAt == nil { metadata.completedAt = Date() }
         do {
@@ -91,14 +93,26 @@ final class ArtworkStore {
         }
         artworks.removeAll { $0.id == id }
         artworks.insert(metadata, at: 0)
-        if let thumbnail {
-            thumbnails[id] = thumbnail
-            Task.detached(priority: .utility) {
-                if let png = thumbnail.pngData() { try? repository.saveThumbnail(png, for: id) }
-            }
+        if let image = thumbnail() {
+            thumbnails[id] = image
+            writeThumbnail(image, for: id, in: repository)
         }
         return true
     }
+
+    /// Thumbnail files are written one after another on a background queue, and the app asks
+    /// for a little extra time so a write isn't cut off when the app goes to the background.
+    private func writeThumbnail(_ image: UIImage, for id: UUID, in repository: ArtworkRepository) {
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Save thumbnail")
+        Self.thumbnailQueue.async {
+            if let png = image.pngData() { try? repository.saveThumbnail(png, for: id) }
+            DispatchQueue.main.async {
+                if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
+            }
+        }
+    }
+
+    private static let thumbnailQueue = DispatchQueue(label: "ColorDraw.thumbnails", qos: .utility)
 
     func delete(_ id: UUID) {
         do {

@@ -54,7 +54,8 @@ final class SoundPlayer {
         guard isEnabled, setUpIfNeeded() else { return false }
         speech.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+        // The phrases are English, so use an English voice whatever the device language.
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
         utterance.pitchMultiplier = 1.25
         speech.speak(utterance)
