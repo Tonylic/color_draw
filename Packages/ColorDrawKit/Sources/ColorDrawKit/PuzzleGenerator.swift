@@ -45,10 +45,10 @@ public struct PuzzleSettings: Hashable, Sendable {
     }
 
     /// For about five-year-olds: up to 50 colors, in fairly big shapes.
-    public static let easy = PuzzleSettings(colorCount: 50, maxDimension: 220, minimumRegionArea: 18, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 5)
-    public static let medium = PuzzleSettings(colorCount: 100, maxDimension: 300, minimumRegionArea: 14, minimumRegionRadius: 1.8, smoothingPasses: 1, minimumColorDistance: 4)
+    public static let easy = PuzzleSettings(colorCount: 50, maxDimension: 220, minimumRegionArea: 18, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 7)
+    public static let medium = PuzzleSettings(colorCount: 100, maxDimension: 300, minimumRegionArea: 14, minimumRegionRadius: 1.8, smoothingPasses: 1, minimumColorDistance: 5)
     /// For about eight-year-olds: up to 200 colors and lots of detail.
-    public static let hard = PuzzleSettings(colorCount: 200, maxDimension: 400, minimumRegionArea: 12, minimumRegionRadius: 1.6, smoothingPasses: 1, minimumColorDistance: 3)
+    public static let hard = PuzzleSettings(colorCount: 200, maxDimension: 400, minimumRegionArea: 12, minimumRegionRadius: 1.6, smoothingPasses: 1, minimumColorDistance: 4)
 }
 
 public enum PuzzleGeneratorError: Error, Equatable {

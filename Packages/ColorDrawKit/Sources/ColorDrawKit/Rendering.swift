@@ -24,7 +24,7 @@ public struct CanvasStyle: Sendable {
         let lab = paint.lab
         let chroma = lab.chroma
         // Keep a little of the hue so the picture is recognizable, never more than a tint.
-        let keep = chroma > 0 ? min(0.3, 11 / chroma) : 0
+        let keep = chroma > 0 ? min(0.4, 16 / chroma) : 0
         return LabColor(l: 84 + 0.13 * lab.l, a: lab.a * keep, b: lab.b * keep).rgb
     }
 

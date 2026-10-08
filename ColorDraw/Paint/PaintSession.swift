@@ -68,6 +68,7 @@ final class PaintSession {
     @ObservationIgnored private var lastActivity = Date()
     @ObservationIgnored private var lastWrongTap: (region: Int, date: Date)?
     @ObservationIgnored private var idleNudges = 0
+    @ObservationIgnored private var reachedQuarter = 0
 
     private static let cheers = ["Great job!", "Super!", "Wow!", "Amazing!", "You rock!", "Yay!", "So pretty!", "Brilliant!"]
 
@@ -78,8 +79,19 @@ final class PaintSession {
         self.store = store
         let progress = PaintProgress(puzzle: puzzle, filledRegions: artwork.filledRegions)
         self.progress = progress
-        selectedColor = progress.remainingByColor.firstIndex { $0 > 0 } ?? 0
+        let firstUnfinished = progress.remainingByColor.firstIndex { $0 > 0 } ?? 0
+        if puzzle.palette.count > Self.smallPaletteLimit {
+            // Big puzzles start with the color of the biggest unpainted shape: easy to see and
+            // to tap, so the first stroke is a success.
+            let biggest = puzzle.regions.indices
+                .filter { !progress.filled[$0] }
+                .max { puzzle.regions[$0].labelRadius < puzzle.regions[$1].labelRadius }
+            selectedColor = biggest.map { puzzle.regions[$0].colorIndex } ?? firstUnfinished
+        } else {
+            selectedColor = firstUnfinished
+        }
         hintTokens = [Int](repeating: 0, count: puzzle.palette.count)
+        reachedQuarter = progress.filledCount * 4 / max(1, progress.regionCount)
     }
 
     var isComplete: Bool { progress.isComplete }
@@ -118,9 +130,22 @@ final class PaintSession {
         }
         guard color != selectedColor else { return }
         selectedColor = color
+        if hintedColor == color { hintedColor = nil }
         canvas?.selectionChanged()
         Haptics.select()
         SoundPlayer.shared.playTick()
+    }
+
+    /// Picks a color from the color chart. If none of its shapes are on screen, the picture
+    /// zooms to one so the child isn't left searching.
+    func pickFromChart(color: Int) {
+        select(color: color)
+        guard !progress.isFinished(color: color), canvas?.isAnyUnpaintedRegionVisible(of: color) == false else { return }
+        Task { [weak self] in
+            // Let the chart slide away first.
+            guard (try? await Task.sleep(for: .seconds(0.45))) != nil else { return }
+            self?.findNextShape()
+        }
     }
 
     /// Paints `region` if it takes the selected color. Wrong colors are ignored unless `isTap`,
@@ -139,6 +164,7 @@ final class PaintSession {
                 finishPicture()
             } else {
                 if colorFinished { finishColor() }
+                celebrateMilestone()
                 scheduleSave()
             }
             return true
@@ -147,6 +173,14 @@ final class PaintSession {
             noteActivity()
             hintCount += 1
             hintTokens[expected] = hintCount
+            if usesLargePalette {
+                // With dozens of paints, hunting for one is no fun: tapping a shape picks up its
+                // paint (the pot pops in the tray), and the next tap paints.
+                lastWrongTap = nil
+                hintedColor = nil
+                select(color: expected)
+                return false
+            }
             hintedColor = expected
             SoundPlayer.shared.playOops()
             Haptics.oops()
@@ -295,10 +329,14 @@ final class PaintSession {
     }
 
     private func finishColor() {
-        SoundPlayer.shared.playColorDone()
-        Haptics.success()
-        cheerCount += 1
-        showCheer(Self.cheers[cheerCount % Self.cheers.count])
+        // In big puzzles many colors have only a shape or two; cheering for each would turn into
+        // noise, so those just chime softly and the cheers are saved for milestones.
+        if !usesLargePalette || progress.totalByColor[selectedColor] >= 3 {
+            SoundPlayer.shared.playColorDone()
+            Haptics.success()
+            cheerCount += 1
+            showCheer(Self.cheers[cheerCount % Self.cheers.count])
+        }
         // Hand the child the next paint pot automatically: preferably one they can use right
         // where they are looking…
         guard let next = visibleColors.first(where: { !progress.isFinished(color: $0) })
@@ -324,6 +362,20 @@ final class PaintSession {
             // VoiceOver already reads the celebration card; don't talk over it.
             if !UIAccessibility.isVoiceOverRunning { SoundPlayer.shared.say("You did it!") }
         }
+    }
+
+    /// Big puzzles take a while; a cheer at each quarter keeps the child going.
+    private func celebrateMilestone() {
+        guard usesLargePalette else { return }
+        let quarter = progress.filledCount * 4 / max(1, progress.regionCount)
+        guard quarter > reachedQuarter else { return }
+        reachedQuarter = quarter
+        let message = ["", "A quarter done!", "Halfway there!", "Almost done!"][min(quarter, 3)]
+        guard !message.isEmpty else { return }
+        SoundPlayer.shared.playColorDone()
+        Haptics.success()
+        cheerCount += 1
+        showCheer(message)
     }
 
     private func showCheer(_ text: String) {

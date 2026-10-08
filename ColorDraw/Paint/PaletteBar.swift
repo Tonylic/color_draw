@@ -124,35 +124,29 @@ private struct PotStrip: View {
     }
 }
 
-/// Opens the chart of all colors: a pot made of a little rainbow of the picture's own paints.
+/// Opens the chart of all colors. A rounded rainbow tile (not round like a pot) so it never reads
+/// as one of the paints.
 private struct AllColorsButton: View {
     let colors: [RGBColor]
     let action: () -> Void
 
-    private let size: CGFloat = 62
+    private let size: CGFloat = 58
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 3) {
                 ZStack {
-                    // Eight evenly spaced paints from the (rainbow-ordered) palette.
-                    let samples = (0..<8).map { colors[$0 * (colors.count - 1) / 7] }
-                    ForEach(0..<8, id: \.self) { slice in
-                        Circle()
-                            .trim(from: CGFloat(slice) / 8, to: CGFloat(slice + 1) / 8)
-                            .stroke(Color(samples[slice]), lineWidth: size * 0.22)
-                    }
-                    .rotationEffect(.degrees(-90))
-                    .padding(size * 0.11)
-                    Circle()
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(AngularGradient(colors: Theme.rainbow + [Theme.rainbow[0]], center: .center))
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(.white)
-                        .padding(size * 0.24)
+                        .padding(9)
                     Image(systemName: "square.grid.3x3.fill")
-                        .font(.system(size: size * 0.26, weight: .bold))
+                        .font(.system(size: size * 0.32, weight: .bold))
                         .foregroundStyle(Theme.purple)
                 }
                 .frame(width: size, height: size)
-                .background(Circle().fill(Theme.ink.opacity(0.08)).offset(y: 3))
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.ink.opacity(0.12)).offset(y: 3))
                 Text("All")
                     .font(Theme.font(.caption, weight: .black))
                     .foregroundStyle(Theme.ink)
@@ -185,19 +179,21 @@ private struct NothingHereView: View {
 }
 
 /// Every color in a chart of ten per row, like the hundreds charts children know from school:
-/// 37 is in the fourth row. Big palettes are split into pages of 50 (1–50, 51–100, …) so a page
-/// fits on screen without scrolling. The rainbow order of the palette makes each page a color
-/// gradient, so children can also find a color just by looking for it.
+/// 37 is in the fourth row, seventh column. Big palettes are split into pages of 50 (1–50, 51–100,
+/// …) that fit on screen without scrolling. The rainbow order of the palette makes each page a
+/// color gradient, so children can also find a color just by looking for it. Children who can
+/// read the number can also just type it.
 struct AllColorsSheet: View {
     let session: PaintSession
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("hideFinishedColors") private var hideFinished = false
     @State private var page = 0
+    @State private var showsKeypad = false
 
     static let pageSize = 50
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 10)
+    static let rowHeight: CGFloat = 50
 
-    private var pageCount: Int { (session.puzzle.palette.count + Self.pageSize - 1) / Self.pageSize }
+    private var colorCount: Int { session.puzzle.palette.count }
+    private var pageCount: Int { (colorCount + Self.pageSize - 1) / Self.pageSize }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -206,12 +202,14 @@ struct AllColorsSheet: View {
                     .font(Theme.font(.title2, weight: .black))
                     .foregroundStyle(Theme.ink)
                 Spacer()
-                Toggle(isOn: $hideFinished) {
-                    Label("Hide done", systemImage: "checkmark.circle")
-                        .font(Theme.font(.subheadline, weight: .bold))
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { showsKeypad.toggle() }
+                    Haptics.select()
+                } label: {
+                    Image(systemName: showsKeypad ? "square.grid.3x3.fill" : "number")
                 }
-                .toggleStyle(.button)
-                .tint(Theme.green)
+                .buttonStyle(RoundIconButtonStyle(size: 40, tint: .white, background: Theme.purple))
+                .accessibilityLabel(showsKeypad ? "Show the color chart" : "Type a number")
                 Button {
                     dismiss()
                 } label: {
@@ -223,53 +221,66 @@ struct AllColorsSheet: View {
             .padding(.horizontal, 18)
             .padding(.top, 18)
 
-            if pageCount > 1 {
-                PageTabs(session: session, pageCount: pageCount, pageSize: Self.pageSize, page: $page)
-                    .padding(.horizontal, 12)
-            }
-
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 6) {
-                    ForEach(shownColors, id: \.self) { index in
-                        ChartPot(
-                            number: index + 1,
-                            color: session.puzzle.palette[index],
-                            isDone: session.progress.isFinished(color: index),
-                            isSelected: index == session.selectedColor
-                        ) {
-                            pick(index)
-                        }
-                    }
+            if showsKeypad {
+                NumberKeypad(session: session) { pick($0) }
+                    .transition(.opacity)
+            } else {
+                if pageCount > 1 {
+                    PageTabs(session: session, pageCount: pageCount, pageSize: Self.pageSize, page: $page)
+                        .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 24)
-                .id(page)
-                .transition(.opacity)
+                chart
+                    .transition(.opacity)
             }
-            .accessibilityIdentifier("allColors")
-            .animation(.easeInOut(duration: 0.2), value: page)
+            Spacer(minLength: 0)
         }
         .background(Theme.paper.ignoresSafeArea())
-        .presentationDetents([.large, .medium])
+        // Just tall enough for a full page, so the picture stays visible above it.
+        .presentationDetents([.height(sheetHeight), .large])
         .presentationDragIndicator(.visible)
-        .onAppear { page = session.selectedColor / Self.pageSize }
+        .onAppear {
+            // Open where the child is likely looking: the color they were just shown, or the one in hand.
+            page = (session.hintedColor ?? session.selectedColor) / Self.pageSize
+        }
     }
 
-    private var shownColors: [Int] {
+    private var sheetHeight: CGFloat {
+        let rows = CGFloat((min(colorCount, Self.pageSize) + 9) / 10)
+        return 96 + (pageCount > 1 ? 66 : 0) + rows * Self.rowHeight + 8
+    }
+
+    private var chart: some View {
         let first = page * Self.pageSize
-        let range = first..<min(first + Self.pageSize, session.puzzle.palette.count)
-        return hideFinished ? range.filter { !session.progress.isFinished(color: $0) } : Array(range)
+        let colors = Array(first..<min(first + Self.pageSize, colorCount))
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 10), spacing: 0) {
+            ForEach(colors, id: \.self) { index in
+                ChartPot(
+                    number: index + 1,
+                    color: session.puzzle.palette[index],
+                    isDone: session.progress.isFinished(color: index),
+                    isSelected: index == session.selectedColor
+                ) {
+                    pick(index)
+                }
+                .frame(height: Self.rowHeight)
+            }
+        }
+        .padding(.horizontal, 8)
+        .id(page)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("allColors")
+        .animation(.easeInOut(duration: 0.2), value: page)
     }
 
     private func pick(_ index: Int) {
-        session.select(color: index)
-        // A finished color just wiggles in the tray; there's nothing left to paint with it.
+        session.pickFromChart(color: index)
+        // A finished color just wiggles; there's nothing left to paint with it.
         if !session.progress.isFinished(color: index) { dismiss() }
     }
 }
 
 /// Tabs for the pages of the chart, e.g. "1–50 | 51–100 | 101–150 | 151–159", each with a strip
-/// of its colors so children can also pick a page by color.
+/// of its colors so children can also pick a page by color. Finished pages get a check.
 private struct PageTabs: View {
     let session: PaintSession
     let pageCount: Int
@@ -282,15 +293,22 @@ private struct PageTabs: View {
                 let first = index * pageSize
                 let last = min(first + pageSize, session.puzzle.palette.count) - 1
                 let isCurrent = index == page
+                let isDone = (first...last).allSatisfy { session.progress.isFinished(color: $0) }
                 Button {
                     page = index
                     Haptics.select()
                 } label: {
                     VStack(spacing: 4) {
-                        Text("\(first + 1)–\(last + 1)")
-                            .font(Theme.font(.subheadline, weight: .black))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
+                        HStack(spacing: 3) {
+                            if isDone {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text("\(first + 1)–\(last + 1)")
+                                .font(Theme.font(.subheadline, weight: .black))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
                         // The page's colors as a little rainbow bar.
                         HStack(spacing: 0) {
                             ForEach(Array(stride(from: first, through: last, by: max(1, (last - first) / 9))), id: \.self) { color in
@@ -315,13 +333,15 @@ private struct PageTabs: View {
                 }
                 .buttonStyle(PotButtonStyle())
                 .accessibilityLabel("Colors \(first + 1) to \(last + 1)")
+                .accessibilityValue(isDone ? "All done" : "")
                 .accessibilityAddTraits(isCurrent ? .isSelected : [])
             }
         }
     }
 }
 
-/// One pot in the color chart: small, but the whole cell is the touch target.
+/// One pot in the color chart. The whole cell (no gaps between cells) is the touch target, and
+/// the pot fills as much of it as it can.
 private struct ChartPot: View {
     let number: Int
     let color: RGBColor
@@ -332,38 +352,117 @@ private struct ChartPot: View {
     var body: some View {
         let ink: Color = color.prefersDarkText ? Theme.ink : .white
         Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(Color(color).gradient)
-                    .overlay(Circle().stroke(Theme.ink.opacity(0.25), lineWidth: 1.5))
-                if isDone {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .black))
-                        .foregroundStyle(ink)
-                } else {
-                    Text("\(number)")
-                        .font(.system(size: number >= 100 ? 12 : 15, weight: .black, design: .rounded))
-                        .foregroundStyle(ink)
-                        .minimumScaleFactor(0.6)
-                        .lineLimit(1)
-                        .padding(.horizontal, 2)
+            GeometryReader { geometry in
+                let diameter = min(geometry.size.width, geometry.size.height) - 3
+                ZStack {
+                    Circle()
+                        .fill(Color(color).gradient)
+                        .overlay(Circle().stroke(Theme.ink.opacity(0.25), lineWidth: 1.5))
+                    if isDone {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: diameter * 0.4, weight: .black))
+                            .foregroundStyle(ink)
+                    } else {
+                        Text("\(number)")
+                            .font(.system(size: diameter * (number >= 100 ? 0.36 : 0.44), weight: .black, design: .rounded))
+                            .foregroundStyle(ink)
+                            .shadow(color: (ink == .white ? Color.black : .white).opacity(0.35), radius: 0, y: 1)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
                 }
-            }
-            .aspectRatio(1, contentMode: .fit)
-            .padding(3)
-            .background {
-                if isSelected {
-                    Circle().stroke(Theme.ink, lineWidth: 3)
+                .frame(width: diameter, height: diameter)
+                .background {
+                    if isSelected {
+                        Circle().stroke(Theme.ink, lineWidth: 3).padding(-3)
+                    }
                 }
+                .opacity(isDone && !isSelected ? 0.4 : 1)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .opacity(isDone && !isSelected ? 0.4 : 1)
-            .frame(maxWidth: .infinity, minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(PotButtonStyle())
         .accessibilityLabel("Color \(number), \(color.name)")
         .accessibilityValue(isDone ? "All done" : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// "Type the number you see": big keys, a preview pot, and a Go button. The pick happens on its
+/// own as soon as no other color starts with the typed digits: in a 50-color picture "7" picks
+/// color 7 right away (there is no 70), while "3" waits, since 30–39 exist.
+private struct NumberKeypad: View {
+    let session: PaintSession
+    let pick: (Int) -> Void
+    @State private var typed = ""
+
+    private var count: Int { session.puzzle.palette.count }
+    private var value: Int? { Int(typed).flatMap { (1...count).contains($0) ? $0 : nil } }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
+                Text(typed.isEmpty ? "?" : typed)
+                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .foregroundStyle(Theme.ink)
+                    .frame(minWidth: 90)
+                    .accessibilityLabel(typed.isEmpty ? "No number yet" : "Number \(typed)")
+                ZStack {
+                    if let value {
+                        Circle().fill(Color(session.puzzle.palette[value - 1]).gradient)
+                            .overlay(Circle().stroke(Theme.ink.opacity(0.25), lineWidth: 2))
+                    } else {
+                        Circle().stroke(Theme.ink.opacity(0.2), style: StrokeStyle(lineWidth: 3, dash: [6, 5]))
+                    }
+                }
+                .frame(width: 54, height: 54)
+                .accessibilityHidden(true)
+                Button("Go") {
+                    if let value { pick(value - 1) }
+                }
+                .buttonStyle(ChunkyButtonStyle(color: Theme.green, cornerRadius: 20, depth: 4))
+                .disabled(value == nil)
+                .opacity(value == nil ? 0.5 : 1)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
+                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "C"], id: \.self) { key in
+                    Button {
+                        press(key)
+                    } label: {
+                        Group {
+                            if key == "⌫" {
+                                Image(systemName: "delete.left.fill")
+                            } else {
+                                Text(key)
+                            }
+                        }
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white))
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.ink.opacity(0.1)).offset(y: 3))
+                    }
+                    .buttonStyle(PotButtonStyle())
+                    .accessibilityLabel(key == "⌫" ? "Delete" : key == "C" ? "Clear" : key)
+                }
+            }
+            .padding(.horizontal, 18)
+        }
+        .padding(.top, 4)
+    }
+
+    private func press(_ key: String) {
+        Haptics.select()
+        switch key {
+        case "⌫": typed = String(typed.dropLast())
+        case "C": typed = ""
+        default:
+            guard typed.count < 3, !(typed.isEmpty && key == "0") else { return }
+            typed += key
+            // Pick on its own once no other color starts with these digits.
+            if let value, value * 10 > count { pick(value - 1) }
+        }
     }
 }
 

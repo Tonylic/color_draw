@@ -122,7 +122,7 @@ struct RenderingTests {
         let ink = style.number.luminance
         for hex: UInt32 in [0x000000, 0x25285C, 0xFF0000, 0xFFFFFF, 0x40C057] {
             let ghost = style.ghost(of: RGBColor(hex: hex))
-            #expect(ghost.lab.chroma <= 11.5, "Ghosts are only a pale tint")
+            #expect(ghost.lab.chroma <= 16.5, "Ghosts are only a pale tint")
             #expect((ghost.luminance + 0.05) / (ink + 0.05) >= 4.5, "Numbers stay readable on ghosts")
         }
         // Darker paints leave darker ghosts, so the picture shows through.

@@ -27,15 +27,27 @@ little fingers tap or drag over the shapes to fill them in.
   The numbers are limits: a colorful photo uses up to that many paints, while a photo with
   fewer distinct colors gets fewer. Harder levels also keep more detail, so there are more and
   smaller shapes.
-- **Paint by number**: pick a paint pot from the tray at the bottom. Every shape that takes that color is
-  striped in a light tint of it, so kids can see where to paint. Tap a shape, or drag a finger
-  across many shapes at once. Only the right color sticks, so a picture can't be spoiled. A wrong
-  tap wiggles the paint pot that's needed, and tapping the same shape again hands that pot over.
-- **Find any of up to 200 colors quickly**: the big pot on the left is the paint in hand. Next
-  to it the tray shows only the colors that still have shapes to paint *on screen*, which is
-  usually just a few once you zoom in. Tap the big pot for **All Colors**, a chart with ten pots
-  per row (1–10, 11–20, …) like a school hundreds chart. When a color is finished, the next one
-  handed over is one you can see. Pictures with 12 colors or fewer simply show every pot.
+- **Paint by number**: pick a paint pot from the tray at the bottom. Every shape that takes that
+  color is striped in a light tint of it, so kids can see where to paint. Tap a shape, or drag a
+  finger across many shapes at once. Only the right color sticks, so a picture can't be spoiled.
+  In small pictures a wrong tap wiggles the paint pot that's needed, and tapping the same shape
+  again hands that pot over.
+- **Find any of up to 200 colors quickly**: big photo puzzles don't make kids scroll through
+  pots.
+  - **Tap a shape to pick up its paint**, then tap again to paint it.
+  - The tray shows the paint in hand plus the colors whose numbers are readable near the middle
+    of the screen, as many as fit. It stays still while the picture moves.
+  - The rainbow **All** tile opens a color chart: ten pots per row (1–10, 11–20, …) like a
+    school hundreds chart, in pages of 50 with color-bar tabs. Kids who can read the number can
+    switch to a big keypad and just type it.
+  - Picking a color whose shapes are off screen zooms to one of them. Finishing a color hands
+    over one nearby.
+  - Unpainted shapes show a pale tint of their color, so the photo is recognizable before
+    painting.
+  - Cheers come at ¼, ½ and ¾ of the way.
+
+  Pictures with 12 colors or fewer, like the built-in drawings, keep a simple row of pots and a
+  white page.
 - **Zoom so numbers are clear**: pinch with two fingers or use the **+ / − / fit** buttons.
   Numbers are drawn as vector text, so they stay sharp at every zoom level. Tiny numbers
   appear as you zoom in. When zoomed in, a drag that starts on a shape you can't paint moves
@@ -110,8 +122,16 @@ Requires Xcode 16 or newer. The project uses folder-synchronized groups.
 
 1. Open `ColorDraw.xcodeproj`.
 2. Pick the **ColorDraw** scheme and an iPhone or iPad simulator, then press **Run**.
-3. To run on a real device, choose your team under *Signing & Capabilities* and change the
-   bundle identifier (`com.example.ColorDraw`) to one of your own.
+3. To run on a real device, choose your team under *Signing & Capabilities* and set the
+   `BUNDLE_ID_PREFIX` build setting (default `com.example`) to something of your own. From the
+   command line:
+
+   ```bash
+   xcodebuild -project ColorDraw.xcodeproj -scheme ColorDraw -configuration Release \
+     -destination 'id=<device UDID>' -allowProvisioningUpdates \
+     DEVELOPMENT_TEAM=<team ID> BUNDLE_ID_PREFIX=com.yourname build
+   xcrun devicectl device install app --device <device UDID> <path to ColorDraw.app>
+   ```
 
 The simulator has no camera, so use **Photos** there; the simulator ships with sample photos.
 

@@ -37,8 +37,11 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(marker.waitForExistence(timeout: 3))
         let needed = Int(marker.label.split(separator: " ").last ?? "") ?? 1
         let other = needed == 1 ? 2 : 1
+        // Remember where the shape is: switching paints removes the hint ring.
+        let shape = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: marker.frame.midX, dy: marker.frame.midY))
         tapPot(other)
-        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        shape.tap()
         XCTAssertEqual(progressValue, "0 percent painted")
         tapPot(needed)
 
@@ -140,7 +143,7 @@ final class ColorDrawUITests: XCTestCase {
 
         // The chart is split into pages of 50 colors.
         allColors.tap()
-        let chart = app.scrollViews["allColors"]
+        let chart = app.descendants(matching: .any)["allColors"]
         XCTAssertTrue(chart.waitForExistence(timeout: 5))
         let secondPage = app.buttons["Colors 51 to 100"]
         XCTAssertTrue(secondPage.exists, "A photo this colorful has more than 50 colors")
@@ -155,6 +158,22 @@ final class ColorDrawUITests: XCTestCase {
         let picked = pot(77)
         XCTAssertTrue(picked.waitForExistence(timeout: 3))
         XCTAssertTrue(picked.isSelected)
+
+        // Children who can read the number can type it instead.
+        allColors.tap()
+        app.buttons["Type a number"].tap()
+        app.buttons["8"].tap()
+        snapshot("15-keypad")
+        app.buttons["Go"].tap()
+        XCTAssertTrue(allColors.waitForExistence(timeout: 5))
+        XCTAssertTrue(pot(8).waitForExistence(timeout: 3))
+        XCTAssertTrue(pot(8).isSelected)
+        // The chart opens again as a chart (not the keypad).
+        allColors.tap()
+        XCTAssertTrue(chart.waitForExistence(timeout: 5))
+        app.buttons["Colors 51 to 100"].tap()
+        chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 77,'")).firstMatch.tap()
+        XCTAssertTrue(pot(77).waitForExistence(timeout: 3))
 
         // The light bulb finds a shape of color 77; tapping it paints.
         app.buttons["Find a shape to paint"].tap()

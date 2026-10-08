@@ -33,6 +33,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// True while the picture glides on after a one-finger flick.
     private var isGliding = false
     private weak var focusMarker: UIView?
+    private var visibleColorsWorkItem: DispatchWorkItem?
 
     /// Room kept free under the picture for the zoom buttons.
     static let bottomControlsHeight: CGFloat = 62
@@ -161,7 +162,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerContent()
-        refreshVisibleColors()
+        scheduleVisibleColorsRefresh()
         updateOutlineStrength()
     }
 
@@ -177,7 +178,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        refreshVisibleColors()
+        scheduleVisibleColorsRefresh()
         guard scrollView.isTracking || scrollView.isZooming || scrollView.isDecelerating else { return }
         // The child is moving the picture around: they're busy, not stuck. And the marker sits in
         // screen space, so it would drift away from its shape.
@@ -196,6 +197,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         let point = gesture.location(in: contentView)
         guard let region = region(at: point) else { return }
         if session.canPaint(region: region) {
+            session.paint(region: region, isTap: true)
+            return
+        }
+        if session.usesLargePalette && !session.progress.filled[region] {
+            // Big puzzles: a tap on an unpainted shape picks up its paint.
             session.paint(region: region, isTap: true)
             return
         }
@@ -398,17 +404,29 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// Tells the session which colors have unpainted shapes closest to the middle of the screen:
     /// the ones the child is looking at. Cheap enough for every scroll step (one distance per
     /// shape); the session ignores unchanged results.
+    /// While the picture moves, the tray keeps still (pots shouldn't shuffle under a finger);
+    /// it catches up a moment after the picture comes to rest.
+    private func scheduleVisibleColorsRefresh() {
+        visibleColorsWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refreshVisibleColors() }
+        visibleColorsWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
     private func refreshVisibleColors() {
         guard contentView.bounds.width > 0 else { return }
         let visible = visibleContentRect
         let center = CGPoint(x: visible.midX, y: visible.midY)
         let pixelSize = contentView.bounds.width / CGFloat(puzzle.width)
+        let zoom = scrollView.zoomScale
         var nearest: [Int: CGFloat] = [:]
         for (index, region) in puzzle.regions.enumerated() where !session.progress.filled[index] {
             let point = labelPoint(of: index)
             guard visible.contains(point) else { continue }
-            // Close to the middle, with a head start for big shapes: those catch the eye first.
-            let score = hypot(point.x - center.x, point.y - center.y) - 2 * CGFloat(region.labelRadius) * pixelSize
+            // Only shapes whose number the child can actually read right now.
+            guard NumberRenderer.fontSize(for: region, in: puzzle, pixelSize: pixelSize) * zoom >= NumbersLayer.minimumReadableSize else { continue }
+            // Close to the middle, with a head start for bigger shapes: those catch the eye first.
+            let score = hypot(point.x - center.x, point.y - center.y) - CGFloat(region.labelRadius) * pixelSize
             if score < nearest[region.colorIndex, default: .infinity] { nearest[region.colorIndex] = score }
         }
         let closest = nearest.sorted { $0.value < $1.value }.prefix(Self.nearbyColorCount).map(\.key)
