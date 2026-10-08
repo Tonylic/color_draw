@@ -76,6 +76,15 @@ struct PaintView: View {
                     .padding(.bottom, 4)
                 ZStack(alignment: .bottom) {
                     PaintCanvas(session: session)
+                        .overlay {
+                            // A blue frame shows that one finger moves the picture right now.
+                            if session.isMoveMode {
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Theme.blue, lineWidth: 5)
+                                    .padding(4)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                     bottomRow
                         .frame(height: PaintCanvasView.bottomControlsHeight - 6)
                         .padding(.bottom, 6)
@@ -96,19 +105,23 @@ struct PaintView: View {
             try? await Task.sleep(for: .seconds(0.8))
             session.showStartHint()
             // Say the first tip out loud for children who can't read yet (only the first few times).
-            if showsStartTip && startTipsSpoken < 3 {
+            if showsStartTip && startTipsSpoken < 3 && SoundPlayer.shared.say(Self.startTip) {
                 startTipsSpoken += 1
-                SoundPlayer.shared.say("Tap the stripy shapes!")
             }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 session.nudgeIfIdle()
             }
         }
-        .task {
-            // The tip gives the zoom buttons their place back after a while, painted or not.
+        .task(id: tipShowing) {
+            // The tip gives the controls their place back after a while, painted or not.
+            guard tipShowing else { return }
             try? await Task.sleep(for: .seconds(8))
-            startTipExpired = true
+            if !Task.isCancelled { startTipExpired = true }
+        }
+        .onChange(of: session.helpNudge) {
+            // Still nothing painted after a while: show the tip again.
+            if session.progress.filledCount == 0 { startTipExpired = false }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.saveNow() }
@@ -116,9 +129,14 @@ struct PaintView: View {
         .onDisappear { session.saveNow() }
     }
 
+    private static let startTip = "Tap the striped shapes!"
+
     private var showsStartTip: Bool {
         session.progress.filledCount == 0 && !session.isComplete && !startTipExpired
     }
+
+    /// Identity for the tip's expiry timer: restarts whenever the tip comes back.
+    private var tipShowing: Bool { showsStartTip }
 
     // MARK: Top bar
 
@@ -137,9 +155,9 @@ struct PaintView: View {
                 Button {
                     session.celebrateAgain()
                 } label: {
-                    Image(systemName: "star.fill")
+                    Image(systemName: "party.popper.fill")
                 }
-                .buttonStyle(RoundIconButtonStyle(tint: .white, background: Theme.yellowDeep))
+                .buttonStyle(RoundIconButtonStyle(tint: .white, background: Theme.pink))
                 .accessibilityLabel("Celebrate and save")
             } else {
                 Button {
@@ -173,7 +191,7 @@ struct PaintView: View {
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 .allowsHitTesting(false)
         } else if showsStartTip {
-            CheerBubble(text: "Tap the stripy shapes!", systemImage: "hand.tap.fill")
+            CheerBubble(text: Self.startTip, systemImage: "hand.tap.fill")
                 .transition(.opacity)
                 .allowsHitTesting(false)
         } else {
@@ -184,45 +202,68 @@ struct PaintView: View {
 
     private var controls: some View {
         HStack(spacing: 4) {
-            Button {
-                session.isMoveMode.toggle()
-                Haptics.select()
-            } label: {
-                Image(systemName: session.isMoveMode ? "hand.raised.fill" : "paintbrush.pointed.fill")
-                    .foregroundStyle(session.isMoveMode ? .white : Theme.ink)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(session.isMoveMode ? Theme.blue : .clear))
+            // Paint or move: both choices visible, the active one filled in.
+            HStack(spacing: 2) {
+                modeButton(moves: false, systemImage: "paintbrush.pointed.fill", label: "Paint with one finger")
+                modeButton(moves: true, systemImage: "hand.raised.fill", label: "Move with one finger")
             }
-            .accessibilityLabel(session.isMoveMode ? "Moving the picture" : "Painting")
-            .accessibilityHint("Switches what dragging one finger does")
+            .padding(3)
+            .background(Capsule().fill(Theme.ink.opacity(0.07)))
 
             Divider().frame(height: 26).padding(.horizontal, 4)
 
-            Button { session.canvas?.zoom(by: 1 / 1.8) } label: { Image(systemName: "minus") }
+            Button { control { session.canvas?.zoom(by: 1 / 1.8) } } label: { Image(systemName: "minus") }
                 .accessibilityLabel("Zoom out")
-            Button { session.canvas?.zoomToFit() } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
+            Button { control { session.canvas?.zoomToFit() } } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
                 .accessibilityLabel("Show whole picture")
-            Button { session.canvas?.zoom(by: 1.8) } label: { Image(systemName: "plus") }
+            Button { control { session.canvas?.zoom(by: 1.8) } } label: { Image(systemName: "plus") }
                 .accessibilityLabel("Zoom in")
 
             Divider().frame(height: 26).padding(.horizontal, 4)
 
             Button {
-                soundEnabled.toggle()
-                if soundEnabled { SoundPlayer.shared.playTick() }
+                control {
+                    soundEnabled.toggle()
+                    if soundEnabled { SoundPlayer.shared.playTick() }
+                }
             } label: {
                 Image(systemName: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
             }
             .accessibilityLabel(soundEnabled ? "Sound on" : "Sound off")
         }
         .buttonStyle(PillIconButtonStyle())
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .background(
             Capsule()
                 .fill(.white.opacity(0.94))
                 .shadow(color: Theme.ink.opacity(0.15), radius: 6, y: 3)
         )
         .overlay(Capsule().stroke(Theme.ink.opacity(0.12), lineWidth: 1.5))
+    }
+
+    private func modeButton(moves: Bool, systemImage: String, label: String) -> some View {
+        let isActive = session.isMoveMode == moves
+        return Button {
+            control {
+                session.isMoveMode = moves
+                Haptics.select()
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .heavy))
+                .foregroundStyle(isActive ? .white : Theme.ink.opacity(0.6))
+                .frame(width: 42, height: 40)
+                .background(Capsule().fill(isActive ? (moves ? Theme.blue : Theme.pink) : .clear))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    /// Runs a control's action and counts it as the child being busy (not stuck).
+    private func control(_ action: () -> Void) {
+        session.noteActivity()
+        action()
     }
 }
 

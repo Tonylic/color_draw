@@ -53,7 +53,7 @@ struct CreatePuzzleView: View {
 
     @Environment(ArtworkStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    @State private var difficulty: Difficulty = .easy
+    @AppStorage("lastDifficulty") private var difficulty: Difficulty = .easy
     @State private var previews: [Difficulty: Preview] = [:]
     /// Generation that is running or done, per level, so switching back and forth never repeats work.
     @State private var generators: [Difficulty: Task<Preview?, Never>] = [:]
@@ -156,11 +156,11 @@ struct CreatePuzzleView: View {
             Image(decorative: photo.image, scale: 1)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 76, height: 76)
+                .frame(width: 64, height: 64)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(.white, lineWidth: 4))
                 .shadow(color: Theme.ink.opacity(0.25), radius: 6, y: 3)
-                .offset(x: -10, y: -10)
+                .offset(x: -18, y: -18)
         }
         .overlay(alignment: .bottom) {
             if let preview = previews[difficulty] {
@@ -231,9 +231,9 @@ private struct DifficultyCard: View {
                     .font(.system(size: 40))
                 Text(difficulty.title)
                     .font(Theme.font(.headline))
-                Text("\(difficulty.settings.colorCount) colors")
+                Text("up to \(difficulty.settings.colorCount) colors")
                     .font(Theme.font(.caption, weight: .bold))
-                    .opacity(0.8)
+                    .opacity(0.9)
             }
             .foregroundStyle(isSelected ? .white : Theme.ink)
             .frame(maxWidth: .infinity)
@@ -251,7 +251,7 @@ private struct DifficultyCard: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(difficulty.title), \(difficulty.settings.colorCount) colors")
+        .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.colorCount) colors")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

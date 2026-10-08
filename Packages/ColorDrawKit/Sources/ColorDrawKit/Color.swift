@@ -27,8 +27,9 @@ public struct RGBColor: Codable, Hashable, Sendable {
         0.2126 * Double(ColorMath.linear(r)) + 0.7152 * Double(ColorMath.linear(g)) + 0.0722 * Double(ColorMath.linear(b))
     }
 
-    /// Whether dark text reads better than white text on top of this color.
-    public var prefersDarkText: Bool { luminance > 0.36 }
+    /// Whether dark text reads better than white text on top of this color (the WCAG contrast
+    /// of white and of the app's dark ink cross at a luminance of about 0.3).
+    public var prefersDarkText: Bool { luminance > 0.3 }
 
     public var lab: LabColor { ColorMath.lab(r: r, g: g, b: b) }
 

@@ -48,15 +48,17 @@ final class SoundPlayer {
         play(notes[colorIndex % notes.count])
     }
 
-    /// Says a short phrase out loud, for children who can't read yet.
-    func say(_ text: String) {
-        guard isEnabled, setUpIfNeeded() else { return }
+    /// Says a short phrase out loud, for children who can't read yet. Returns whether it spoke.
+    @discardableResult
+    func say(_ text: String) -> Bool {
+        guard isEnabled, setUpIfNeeded() else { return false }
         speech.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
         utterance.pitchMultiplier = 1.25
         speech.speak(utterance)
+        return true
     }
 
     func playColorDone() { play(chime) }

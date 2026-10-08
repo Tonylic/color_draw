@@ -40,10 +40,10 @@ struct CelebrationView: View {
             withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.65)) { appeared = true }
         }
         .alert("Ask a grown-up", isPresented: $showPermissionHelp) {
-            Button("Open Settings") { AppSettings.open() }
-            Button("Not Now", role: .cancel) {}
+            Button("OK", role: .cancel) {}
         } message: {
-            Text("To save paintings, Color Draw needs permission to add to Photos. A grown-up can turn it on in Settings.")
+            // No button that leaves the app: grown-ups can go to Settings themselves.
+            Text("To save paintings, Color Draw needs permission to add to Photos. A grown-up can turn it on in Settings › Color Draw › Photos.")
         }
     }
 
@@ -78,14 +78,12 @@ struct CelebrationView: View {
                         .accessibilityLabel("Your finished painting")
                 }
                 VStack(spacing: 12) {
-                    Button {
-                        save()
-                    } label: {
-                        Label(saveTitle, systemImage: saveState == .saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                    Button(action: onHome) {
+                        Label("More Pictures", systemImage: "sparkles")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(ChunkyButtonStyle(color: saveState == .saved ? Theme.green : Theme.blue))
-                    .disabled(saveState == .saving || saveState == .saved || finished == nil)
+                    .buttonStyle(ChunkyButtonStyle(color: Theme.orange))
+                    .accessibilityIdentifier("celebrationHome")
 
                     HStack(spacing: 12) {
                         Button {
@@ -94,14 +92,18 @@ struct CelebrationView: View {
                             Label("Look", systemImage: "eye.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(ChunkyButtonStyle(color: Theme.purple))
-                        Button(action: onHome) {
-                            Label("Home", systemImage: "house.fill")
+                        .buttonStyle(ChunkyButtonStyle(color: Theme.purple, cornerRadius: 22, depth: 4))
+                        Button {
+                            save()
+                        } label: {
+                            Label(saveTitle, systemImage: saveState == .saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(ChunkyButtonStyle(color: Theme.orange))
-                        .accessibilityIdentifier("celebrationHome")
+                        .buttonStyle(ChunkyButtonStyle(color: saveState == .saved ? Theme.green : Theme.blue, cornerRadius: 22, depth: 4))
+                        .disabled(saveState == .saving || saveState == .saved || finished == nil)
+                        .accessibilityLabel(saveState == .saved ? "Saved to Photos" : "Save to Photos")
                     }
+                    .font(Theme.font(.headline))
                 }
                 .padding(.top, 4)
             }
@@ -116,7 +118,7 @@ struct CelebrationView: View {
 
     private var saveTitle: String {
         switch saveState {
-        case .idle: "Save to Photos"
+        case .idle: "Save"
         case .saving: "Saving…"
         case .saved: "Saved!"
         case .failed: "Try Again"

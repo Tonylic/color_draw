@@ -2,7 +2,9 @@ import ColorDrawKit
 import SwiftUI
 import UIKit
 
-/// The zoomable picture. One finger paints (tap or drag), two fingers pinch and move.
+/// The zoomable picture. One finger paints (tap or drag), two fingers pinch and move. When zoomed
+/// in, a one-finger drag that starts somewhere it can't paint moves the picture instead, and in
+/// move mode every one-finger drag does.
 ///
 /// Layers inside the zoomed content view, bottom to top:
 /// 1. `paintLayer`: the painted / blank / striped regions (a bitmap from `PaintBuffer`).
@@ -24,6 +26,10 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private var lastStrokePoint: CGPoint?
     /// The paint a drag started with; the stroke ends if the color changes underneath it.
     private var strokeColor: Int?
+    /// Set while a one-finger drag is moving the picture rather than painting: the content
+    /// offset when the drag began.
+    private var panStartOffset: CGPoint?
+    private var isMoveMode = false
     private weak var focusMarker: UIView?
 
     /// Room kept free under the picture for the zoom buttons.
@@ -32,7 +38,6 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// Finger "brush" radius and tap forgiveness, in screen points.
     private let brushRadius: CGFloat = 9
     private let tapForgiveness: CGFloat = 16
-    private var strokeRecognizer: UIPanGestureRecognizer!
 
     init(session: PaintSession) {
         self.session = session
@@ -76,7 +81,6 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         stroke.maximumNumberOfTouches = 1
         stroke.delegate = self
         addGestureRecognizer(stroke)
-        strokeRecognizer = stroke
 
         // The picture is one accessibility element; the "Find" marker is another one beside it.
         contentView.isAccessibilityElement = true
@@ -182,12 +186,27 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         // A second finger means the child is zooming, not painting.
         if gesture.numberOfTouches > 1 || scrollView.pinchGestureRecognizer?.state == .changed {
             lastStrokePoint = nil
+            panStartOffset = nil
+            return
+        }
+        if gesture.state == .began {
+            // Start where the finger first touched, not where the drag was recognized.
+            let point = gesture.location(in: contentView)
+            let translation = gesture.translation(in: contentView)
+            let start = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
+            let isZoomedIn = scrollView.zoomScale > 1.05
+            let startsOnPaint = regions(near: start, radius: brushRadius / scrollView.zoomScale).contains(where: session.canPaint(region:))
+            if isMoveMode || (isZoomedIn && !startsOnPaint) {
+                panStartOffset = scrollView.contentOffset
+            }
+        }
+        if let panStartOffset {
+            movePicture(with: gesture, from: panStartOffset)
             return
         }
         let point = gesture.location(in: contentView)
         switch gesture.state {
         case .began:
-            // Start where the finger first touched, not where the drag was recognized.
             let translation = gesture.translation(in: contentView)
             let start = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
             strokeColor = session.selectedColor
@@ -207,6 +226,32 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             return
         }
         lastStrokePoint = point
+    }
+
+    /// Scrolls the picture along with a one-finger drag, gliding a little after the finger lifts.
+    private func movePicture(with gesture: UIPanGestureRecognizer, from startOffset: CGPoint) {
+        session.noteActivity()
+        focusMarker?.removeFromSuperview()
+        let translation = gesture.translation(in: scrollView)
+        switch gesture.state {
+        case .began, .changed:
+            scrollView.contentOffset = clampedOffset(CGPoint(x: startOffset.x - translation.x, y: startOffset.y - translation.y))
+        default:
+            panStartOffset = nil
+            let velocity = gesture.velocity(in: scrollView)
+            let current = scrollView.contentOffset
+            let target = clampedOffset(CGPoint(x: current.x - velocity.x * 0.18, y: current.y - velocity.y * 0.18))
+            UIView.animate(withDuration: 0.4, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+                self.scrollView.contentOffset = target
+            }
+        }
+    }
+
+    private func clampedOffset(_ offset: CGPoint) -> CGPoint {
+        let insets = scrollView.contentInset
+        let maxX = max(-insets.left, scrollView.contentSize.width - scrollView.bounds.width + insets.right)
+        let maxY = max(-insets.top, scrollView.contentSize.height - scrollView.bounds.height + insets.bottom)
+        return CGPoint(x: min(max(offset.x, -insets.left), maxX), y: min(max(offset.y, -insets.top), maxY))
     }
 
     private func paintStroke(from start: CGPoint, to end: CGPoint) {
@@ -291,9 +336,8 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func setMoveMode(_ isOn: Bool) {
-        // In move mode one finger scrolls the picture; taps still paint.
-        strokeRecognizer.isEnabled = !isOn
-        scrollView.panGestureRecognizer.minimumNumberOfTouches = isOn ? 1 : 2
+        // In move mode one-finger drags scroll the picture; taps still paint.
+        isMoveMode = isOn
     }
 
     func isAnyUnpaintedRegionVisible(of color: Int) -> Bool {
@@ -314,7 +358,10 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func point(at region: Int) {
-        showFocusMarker(on: region)
+        // Only point at shapes the child can see right now.
+        let visible = scrollView.convert(scrollView.bounds, to: contentView)
+        guard visible.contains(labelPoint(of: region)) else { return }
+        showFocusMarker(on: region, showsHand: true)
     }
 
     func nearestUnpaintedRegion(of color: Int) -> Int? {
@@ -430,9 +477,9 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     /// A pulsing ring around a shape the child should paint next. It is also an accessibility
     /// element, so VoiceOver users can paint the shape by double-tapping it.
-    private func showFocusMarker(on region: Int) {
+    private func showFocusMarker(on region: Int, showsHand: Bool = false) {
         focusMarker?.removeFromSuperview()
-        let marker = FocusMarkerView(number: puzzle.regions[region].colorIndex + 1) { [weak self] in
+        let marker = FocusMarkerView(number: puzzle.regions[region].colorIndex + 1, showsHand: showsHand) { [weak self] in
             self?.session.paint(region: region, isTap: true)
         }
         marker.center = contentView.convert(labelPoint(of: region), to: effectsView)
@@ -461,11 +508,13 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 /// The pulsing "paint me!" ring shown by the Find button.
 private final class FocusMarkerView: UIView {
     static let lifetime: TimeInterval = 4.2
+    private static let ringSize: CGFloat = 80
     private let activate: () -> Void
 
-    init(number: Int, activate: @escaping () -> Void) {
+    /// - Parameter showsHand: Adds a ghost finger that keeps tapping the shape ("tap here!").
+    init(number: Int, showsHand: Bool, activate: @escaping () -> Void) {
         self.activate = activate
-        super.init(frame: CGRect(x: 0, y: 0, width: 60, height: 60))
+        super.init(frame: CGRect(x: 0, y: 0, width: Self.ringSize, height: Self.ringSize))
         isUserInteractionEnabled = false
         isAccessibilityElement = true
         accessibilityIdentifier = "focusMarker"
@@ -473,12 +522,13 @@ private final class FocusMarkerView: UIView {
         accessibilityHint = "Double-tap to paint it."
         accessibilityTraits = .button
 
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
         let ring = CAShapeLayer()
-        ring.path = UIBezierPath(ovalIn: bounds).cgPath
+        ring.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 3, dy: 3)).cgPath
         ring.frame = bounds
         ring.fillColor = UIColor.clear.cgColor
         ring.strokeColor = UIColor(Theme.pink).cgColor
-        ring.lineWidth = 5
+        ring.lineWidth = 6
         ring.opacity = 0
         layer.addSublayer(ring)
 
@@ -488,16 +538,38 @@ private final class FocusMarkerView: UIView {
         let group = CAAnimationGroup()
         group.duration = 0.84
         group.repeatCount = Float(Self.lifetime / group.duration)
-        if UIAccessibility.isReduceMotionEnabled {
+        if reduceMotion {
             group.animations = [fade]
             ring.transform = CATransform3DMakeScale(0.8, 0.8, 1)
         } else {
             let shrink = CABasicAnimation(keyPath: "transform.scale")
-            shrink.fromValue = 1.6
+            shrink.fromValue = 1.5
             shrink.toValue = 0.5
             group.animations = [shrink, fade]
         }
         ring.add(group, forKey: "pulse")
+
+        if showsHand {
+            let hand = UIImageView(image: UIImage(systemName: "hand.point.up.left.fill"))
+            hand.tintColor = .white
+            hand.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 38, weight: .bold)
+            hand.layer.shadowColor = UIColor(Theme.ink).cgColor
+            hand.layer.shadowOpacity = 0.6
+            hand.layer.shadowRadius = 3
+            hand.layer.shadowOffset = CGSize(width: 0, height: 2)
+            hand.sizeToFit()
+            // The fingertip rests on the shape's center.
+            hand.center = CGPoint(x: bounds.midX + hand.bounds.width * 0.32, y: bounds.midY + hand.bounds.height * 0.42)
+            addSubview(hand)
+            if !reduceMotion {
+                let press = CAKeyframeAnimation(keyPath: "transform")
+                press.values = [CATransform3DIdentity, CATransform3DMakeScale(0.85, 0.85, 1), CATransform3DIdentity]
+                press.keyTimes = [0, 0.3, 0.6]
+                press.duration = 0.84
+                press.repeatCount = group.repeatCount
+                hand.layer.add(press, forKey: "tap")
+            }
+        }
     }
 
     @available(*, unavailable)

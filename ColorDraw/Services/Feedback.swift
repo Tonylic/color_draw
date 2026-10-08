@@ -43,12 +43,3 @@ enum PhotoSaver {
         }
     }
 }
-
-enum AppSettings {
-    /// Opens this app's page in the Settings app, where grown-ups can allow camera or Photos access.
-    @MainActor
-    static func open() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
-    }
-}

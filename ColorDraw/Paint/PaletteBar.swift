@@ -155,6 +155,13 @@ struct PaintPot: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isSelected)
         .keyframeAnimator(initialValue: PotWiggle(), trigger: wiggle) { content, wiggle in
             content
+                // A glowing halo that lingers, so the hint isn't missed while eyes are on the picture.
+                .background {
+                    Circle()
+                        .stroke(Theme.pink, lineWidth: 5)
+                        .scaleEffect(1.22)
+                        .opacity(wiggle.glow)
+                }
                 .rotationEffect(.degrees(wiggle.angle))
                 .scaleEffect(wiggle.scale)
         } keyframes: { _ in
@@ -173,6 +180,11 @@ struct PaintPot: View {
                 SpringKeyframe(1.2, duration: 0.15)
                 SpringKeyframe(1.0, duration: 0.45)
             }
+            KeyframeTrack(\.glow) {
+                LinearKeyframe(1, duration: 0.15)
+                LinearKeyframe(1, duration: 1.5)
+                LinearKeyframe(0, duration: 0.4)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Color \(number), \(color.name)")
@@ -184,4 +196,5 @@ struct PaintPot: View {
 private struct PotWiggle {
     var angle: Double = 0
     var scale: Double = 1
+    var glow: Double = 0
 }

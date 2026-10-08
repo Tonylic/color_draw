@@ -87,8 +87,16 @@ final class PaintSession {
     }
 
     func select(color: Int) {
-        guard color != selectedColor, puzzle.palette.indices.contains(color) else { return }
+        guard puzzle.palette.indices.contains(color) else { return }
         noteActivity()
+        if progress.isFinished(color: color) {
+            // Nothing left to paint with this pot: it wiggles "all done!" instead.
+            hintCount += 1
+            hintTokens[color] = hintCount
+            Haptics.select()
+            return
+        }
+        guard color != selectedColor else { return }
         selectedColor = color
         canvas?.selectionChanged()
         Haptics.select()
@@ -122,13 +130,14 @@ final class PaintSession {
             hintedColor = expected
             SoundPlayer.shared.playOops()
             Haptics.oops()
-            // Tapping the same shape again soon: hand over the right paint so nobody gets stuck.
+            // Tapping the same shape again soon: hand over the right paint and paint it, so nobody
+            // gets stuck.
             if let last = lastWrongTap, last.region == region, Date().timeIntervalSince(last.date) < 10 {
                 lastWrongTap = nil
                 select(color: expected)
-            } else {
-                lastWrongTap = (region, Date())
+                return paint(region: region, isTap: true)
             }
+            lastWrongTap = (region, Date())
             return false
         case .alreadyFilled:
             return false
@@ -165,19 +174,28 @@ final class PaintSession {
         idleNudges = 0
     }
 
-    /// Called every few seconds. After a while without painting, the help button wiggles and a
-    /// shape on screen pulses. If the child stays stuck, the picture zooms to a shape for them —
-    /// once; after that only the gentle wiggle repeats until they do something.
+    /// Called every few seconds. When a child hasn't done anything for a while, help step by step:
+    /// first make sure shapes of the paint are on screen and point at one (twice), then zoom right
+    /// to one. After that only the light bulb wiggles now and then, until the child does something.
     func nudgeIfIdle() {
-        guard !progress.isComplete, !showsCelebration, Date().timeIntervalSince(lastActivity) > 10 else { return }
+        guard !progress.isComplete, !showsCelebration, Date().timeIntervalSince(lastActivity) > 9 else { return }
         lastActivity = Date()
         idleNudges += 1
         helpNudge += 1
-        if idleNudges == 3 {
+        switch idleNudges {
+        case 1, 2:
+            if canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == false {
+                canvas?.zoomToFit()
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(0.5))
+                guard let self, let region = canvas?.nearestUnpaintedRegion(of: selectedColor) else { return }
+                canvas?.point(at: region)
+            }
+        case 3:
             findNextShape()
-        } else if idleNudges < 3, canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == true,
-                  let region = canvas?.nearestUnpaintedRegion(of: selectedColor) {
-            canvas?.point(at: region)
+        default:
+            break
         }
     }
 

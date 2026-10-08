@@ -21,8 +21,9 @@ public struct CanvasStyle: Sendable {
     public static let standard = CanvasStyle(
         // Warm paper rather than pure white, so painting a white shape visibly changes it.
         blank: RGBColor(hex: 0xF9F6F0),
-        highlightLight: RGBColor(hex: 0xE4E7F0),
-        highlightDark: RGBColor(hex: 0xCDD3E2),
+        // Neutral stripes for gray, black, white and beige paints, which have no tint to show.
+        highlightLight: RGBColor(hex: 0xE3E3EB),
+        highlightDark: RGBColor(hex: 0xC8CAD6),
         outline: RGBColor(hex: 0x4C4560),
         number: RGBColor(hex: 0x5A5372)
     )
@@ -52,7 +53,7 @@ public final class PaintBuffer {
         self.detail = detail
         self.style = style
         pixels = [UInt32](repeating: style.blank.pixel, count: detail.width * detail.height)
-        stripePeriod = max(8, detail.scale * 2)
+        stripePeriod = max(10, detail.scale * 3)
         stripes = (style.highlightLight.pixel, style.highlightDark.pixel)
     }
 

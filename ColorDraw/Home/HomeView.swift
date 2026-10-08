@@ -78,10 +78,10 @@ struct HomeView: View {
             Text("This device can't take pictures. Try Photos instead!")
         }
         .alert("Ask a grown-up", isPresented: $showCameraPermissionHelp) {
-            Button("Open Settings") { AppSettings.open() }
-            Button("Not Now", role: .cancel) {}
+            Button("OK", role: .cancel) {}
         } message: {
-            Text("Color Draw needs permission to use the camera. A grown-up can turn it on in Settings.")
+            // No button that leaves the app: grown-ups can go to Settings themselves.
+            Text("Color Draw needs permission to use the camera. A grown-up can turn it on in Settings › Color Draw › Camera.")
         }
         .alert("Oops!", isPresented: Binding(get: { store.storageError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK", role: .cancel) {}
@@ -182,7 +182,12 @@ struct HomeView: View {
                     Button {
                         start(sample)
                     } label: {
-                        SampleCard(title: sample.title, image: samples.previews[sample], isPreparing: preparingSample == sample)
+                        SampleCard(
+                            title: sample.title,
+                            image: samples.previews[sample],
+                            isPreparing: preparingSample == sample,
+                            isFinished: store.artworks.contains { $0.sampleID == sample.rawValue && $0.isComplete }
+                        )
                     }
                     .buttonStyle(CardButtonStyle())
                     .disabled(preparingSample != nil)
@@ -280,14 +285,14 @@ private struct BigButtonLabel: View {
     let systemImage: String
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 38, weight: .bold))
+                .font(.system(size: 30, weight: .bold))
             Text(title)
                 .font(Theme.font(.title2, weight: .black))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
+        .padding(.vertical, 2)
     }
 }
 
@@ -379,6 +384,8 @@ private struct SampleCard: View {
     let title: String
     let image: UIImage?
     let isPreparing: Bool
+    /// Already painted once: shows a check next to the "paint me" brush.
+    let isFinished: Bool
 
     var body: some View {
         VStack(spacing: 8) {
@@ -400,6 +407,26 @@ private struct SampleCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(.white))
+            .overlay(alignment: .topTrailing) {
+                // "Paint me!" badge, so these don't look like finished paintings.
+                HStack(spacing: -6) {
+                    if isFinished {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .black))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(Theme.green))
+                            .overlay(Circle().stroke(.white, lineWidth: 3))
+                    }
+                    Image(systemName: "paintbrush.pointed.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(Theme.pink))
+                        .overlay(Circle().stroke(.white, lineWidth: 3))
+                }
+                .offset(x: 8, y: -8)
+            }
             .shadow(color: Theme.ink.opacity(0.14), radius: 8, y: 5)
             Text(title)
                 .font(Theme.font(.headline))
@@ -407,6 +434,7 @@ private struct SampleCard: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
+        .accessibilityValue(isFinished ? "Painted before" : "")
         .accessibilityHint("Starts painting this picture")
     }
 }

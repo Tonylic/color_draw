@@ -62,7 +62,11 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertEqual(progressValue, "100 percent painted")
         snapshot("05-finished")
 
-        app.buttons["Home"].tap()
+        // The party button brings the celebration (and its Save button) back.
+        app.buttons["Celebrate and save"].tap()
+        XCTAssertTrue(celebration.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Save to Photos"].exists)
+        app.buttons["celebrationHome"].tap()
         XCTAssertTrue(app.staticTexts["My Paintings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Kitty"].firstMatch.exists)
         snapshot("06-home-with-painting")
@@ -101,11 +105,11 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 15), "A preview should appear")
         snapshot("09-create-easy")
 
-        app.buttons["Tricky, 14 colors"].tap()
+        app.buttons["Tricky, up to 14 colors"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         sleep(1)
         snapshot("10-create-tricky")
-        app.buttons["Easy, 6 colors"].tap()
+        app.buttons["Easy, up to 6 colors"].tap()
 
         paint.tap()
         XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 15))
@@ -125,17 +129,18 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(marker.waitForExistence(timeout: 3))
         marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
-        let move = app.buttons["Painting"]
+        let move = app.buttons["Move with one finger"]
         XCTAssertTrue(move.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Paint with one finger"].isSelected)
         move.tap()
-        XCTAssertTrue(app.buttons["Moving the picture"].exists)
+        XCTAssertTrue(move.isSelected)
         let before = progressValue
         // In move mode a one-finger drag scrolls instead of painting.
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
             .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         XCTAssertEqual(progressValue, before)
-        app.buttons["Moving the picture"].tap()
-        XCTAssertTrue(app.buttons["Painting"].exists)
+        app.buttons["Paint with one finger"].tap()
+        XCTAssertTrue(app.buttons["Paint with one finger"].isSelected)
     }
 
     func testZoomButtons() {
