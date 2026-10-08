@@ -30,11 +30,10 @@ func makeNoisyPhoto(width: Int = 200, height: Int = 150, seed: UInt64 = 7) -> RG
     return RGBAImage(width: width, height: height, pixels: pixels)
 }
 
-/// A very busy "photo": a mosaic of small tiles in many strong colors, far more shapes than any
-/// level allows.
-func makeBusyPhoto(width: Int = 560, height: Int = 420, tile: Int = 20, seed: UInt64 = 3) -> RGBAImage {
+/// A very busy "photo": a mosaic of small tiles in many strong colors.
+func makeBusyPhoto(width: Int = 560, height: Int = 420, tile: Int = 20, colorCount: Int = 16, seed: UInt64 = 3) -> RGBAImage {
     var rng = SplitMix64(seed: seed)
-    let colors: [RGBColor] = (0..<16).map { _ in
+    let colors: [RGBColor] = (0..<colorCount).map { _ in
         RGBColor(r: .random(in: 0...255, using: &rng), g: .random(in: 0...255, using: &rng), b: .random(in: 0...255, using: &rng))
     }
     let columns = (width + tile - 1) / tile, rows = (height + tile - 1) / tile
@@ -105,14 +104,14 @@ struct PuzzleGeneratorTests {
     }
 
     @Test(arguments: [("easy", PuzzleSettings.easy, 50), ("medium", .medium, 100), ("hard", .hard, 200)])
-    func busyPhotosAreSimplifiedToTheLevelsShapeLimit(level: String, settings: PuzzleSettings, limit: Int) throws {
-        #expect(settings.maximumRegionCount == limit)
-        let photo = try #require(makeBusyPhoto().makeCGImage())
+    func colorfulPhotosUseUpToTheLevelsColorLimit(level: String, settings: PuzzleSettings, limit: Int) throws {
+        #expect(settings.colorCount == limit)
+        let photo = try #require(makeBusyPhoto(tile: 14, colorCount: 300).makeCGImage())
         let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
         expectValid(puzzle, settings: settings)
-        #expect(puzzle.regions.count <= limit, "\(level) allows at most \(limit) shapes")
-        // A busy photo uses most of the level's budget rather than collapsing into a few blobs.
-        #expect(puzzle.regions.count >= limit / 2, "\(level) made only \(puzzle.regions.count) shapes")
+        #expect(puzzle.palette.count <= limit, "\(level) allows at most \(limit) colors")
+        // A very colorful photo uses most of the level's colors.
+        #expect(puzzle.palette.count >= limit * 6 / 10, "\(level) made only \(puzzle.palette.count) colors")
     }
 
     @Test func simplePhotosStayBelowTheLimit() throws {
@@ -124,7 +123,9 @@ struct PuzzleGeneratorTests {
             context.fill(CGRect(x: 0, y: 120, width: 300, height: 80))
         }?.makeCGImage())
         for settings in [PuzzleSettings.easy, .medium, .hard] {
-            #expect(try PuzzleGenerator.generate(from: image, settings: settings).regions.count == 2)
+            let puzzle = try PuzzleGenerator.generate(from: image, settings: settings)
+            #expect(puzzle.palette.count == 2)
+            #expect(puzzle.regions.count == 2)
         }
     }
 

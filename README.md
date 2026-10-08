@@ -18,18 +18,24 @@ little fingers tap or drag over the shapes to fill them in.
   six built-in drawings (kitty, rainbow, fish, house, flower, rocket).
 - **Choose how tricky**, with a live preview of the finished picture:
 
-  | Level | Shapes (at most) | Colors (at most) | Made for |
-  |---|---|---|---|
-  | 🐣 Easy | 50 | 6 | about 5 years old |
-  | 🐰 Medium | 100 | 10 | in between |
-  | 🦁 Tricky | 200 | 14 | about 8 years old |
+  | Level | Colors (at most) | Made for |
+  |---|---|---|
+  | 🐣 Easy | 50 | about 5 years old |
+  | 🐰 Medium | 100 | in between |
+  | 🦁 Tricky | 200 | about 8 years old |
 
-  The numbers are limits: a busy photo is simplified down to them, while a simple one ends up
-  with fewer shapes.
-- **Paint by number**: pick a paint pot from the palette. Every shape that takes that color is
+  The numbers are limits: a colorful photo uses up to that many paints, while a photo with
+  fewer distinct colors gets fewer. Harder levels also keep more detail, so there are more and
+  smaller shapes.
+- **Paint by number**: pick a paint pot from the tray at the bottom. Every shape that takes that color is
   striped in a light tint of it, so kids can see where to paint. Tap a shape, or drag a finger
   across many shapes at once. Only the right color sticks, so a picture can't be spoiled. A wrong
   tap wiggles the paint pot that's needed, and tapping the same shape again hands that pot over.
+- **Find any of up to 200 colors quickly**: the big pot on the left is the paint in hand. Next
+  to it the tray shows only the colors that still have shapes to paint *on screen*, which is
+  usually just a few once you zoom in. Tap the big pot for **All Colors**, a chart with ten pots
+  per row (1–10, 11–20, …) like a school hundreds chart. When a color is finished, the next one
+  handed over is one you can see. Pictures with 12 colors or fewer simply show every pot.
 - **Zoom so numbers are clear**: pinch with two fingers or use the **+ / − / fit** buttons.
   Numbers are drawn as vector text, so they stay sharp at every zoom level. Tiny numbers
   appear as you zoom in. When zoomed in, a drag that starts on a shape you can't paint moves
@@ -54,17 +60,16 @@ Reduce Motion, and its sounds follow the silent switch.
 The engine lives in [`Packages/ColorDrawKit`](Packages/ColorDrawKit) and is plain Swift and Core
 Graphics, so it is unit-tested on the Mac.
 
-1. **Shrink** the photo to a small working size (150 to 260 pixels on the long side, depending on
+1. **Shrink** the photo to a small working size (220 to 400 pixels on the long side, depending on
    difficulty). Fewer pixels means simpler shapes.
 2. **Smooth** it with an edge-preserving bilateral filter in CIE L\*a\*b\* space, which flattens
    texture and noise but keeps outlines.
-3. **Pick the palette** with k-means++ in Lab space, merge colors a child couldn't tell apart,
-   then give the palette a gentle "storybook" boost (brighter and more colorful).
-   Flat-color artwork, like the built-in drawings, keeps its exact colors.
+3. **Pick the palette** (up to 50, 100 or 200 colors) with k-means++ in Lab space, merge colors
+   that look the same, then give the palette a gentle "storybook" boost (brighter and more
+   colorful). Flat-color artwork, like the built-in drawings, keeps its exact colors.
 4. **Clean up** with a majority filter, then find connected regions and fold every region that
-   is too small or too thin to paint into its best neighbor. If there are still more shapes than
-   the level allows (50, 100 or 200), the smallest ones are folded in too, so the biggest and
-   most recognizable shapes are the ones that stay.
+   is too small or too thin to paint into its best neighbor. (An optional shape limit folds in
+   the smallest remaining ones too, keeping the biggest, most recognizable shapes.)
 5. **Place the numbers** at the deepest point of each region, found with an exact Euclidean
    distance transform. The number's size comes from the largest circle that fits there.
 6. **Smooth the outlines** by scaling the region map up about 10×. Each high-res pixel votes with

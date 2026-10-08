@@ -95,13 +95,7 @@ final class ColorDrawUITests: XCTestCase {
     }
 
     func testTurningAPhotoIntoAPuzzle() throws {
-        app.buttons["Photos"].tap()
-        // The system photo picker runs in its own process; its photos show up as images.
-        let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch
-        guard photo.waitForExistence(timeout: 10) else {
-            throw XCTSkip("The photo picker has no photos on this simulator")
-        }
-        photo.tap()
+        try pickSamplePhoto()
 
         let paint = app.buttons["Let's Paint!"]
         XCTAssertTrue(paint.waitForExistence(timeout: 10))
@@ -110,11 +104,11 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 15), "A preview should appear")
         snapshot("09-create-easy")
 
-        app.buttons["Tricky, up to 200 shapes"].tap()
+        app.buttons["Tricky, up to 200 colors"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         sleep(1)
         snapshot("10-create-tricky")
-        app.buttons["Easy, up to 50 shapes"].tap()
+        app.buttons["Easy, up to 50 colors"].tap()
 
         paint.tap()
         XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 15))
@@ -122,6 +116,54 @@ final class ColorDrawUITests: XCTestCase {
         app.buttons["Home"].tap()
         XCTAssertTrue(app.staticTexts["My Paintings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch.exists)
+    }
+
+    func testBigPhotoPuzzlesUseTheColorChart() throws {
+        try pickSamplePhoto()
+        let tricky = app.buttons["Tricky, up to 200 colors"]
+        XCTAssertTrue(tricky.waitForExistence(timeout: 10))
+        tricky.tap()
+        // Wait for the Tricky preview itself (the previous level's preview may still be fading out).
+        let trickyPreview = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value BEGINSWITH 'Tricky'")).firstMatch
+        XCTAssertTrue(trickyPreview.waitForExistence(timeout: 30))
+        let colors = Int((trickyPreview.value as? String ?? "").split(separator: " ").dropFirst().first ?? "") ?? 0
+        XCTAssertGreaterThan(colors, 50, "A colorful photo on Tricky has lots of colors")
+        app.buttons["Let's Paint!"].tap()
+        XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 20))
+
+        // Instead of one long row of pots: an "All colors" button and a few nearby pots.
+        let allColors = app.buttons["All colors"]
+        XCTAssertTrue(allColors.waitForExistence(timeout: 5))
+        let trayPots = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color '"))
+        XCTAssertLessThanOrEqual(trayPots.count, 8, "The tray shows only a few pots")
+        snapshot("12-big-puzzle")
+
+        // The chart is split into pages of 50 colors.
+        allColors.tap()
+        let chart = app.scrollViews["allColors"]
+        XCTAssertTrue(chart.waitForExistence(timeout: 5))
+        let secondPage = app.buttons["Colors 51 to 100"]
+        XCTAssertTrue(secondPage.exists, "A photo this colorful has more than 50 colors")
+        secondPage.tap()
+        let color77 = chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 77,'")).firstMatch
+        XCTAssertTrue(color77.waitForExistence(timeout: 3))
+        snapshot("13-color-chart")
+        color77.tap()
+
+        // The chart closes and color 77 is now the paint in the tray.
+        XCTAssertTrue(allColors.waitForExistence(timeout: 5))
+        let picked = pot(77)
+        XCTAssertTrue(picked.waitForExistence(timeout: 3))
+        XCTAssertTrue(picked.isSelected)
+
+        // The light bulb finds a shape of color 77; tapping it paints.
+        app.buttons["Find a shape to paint"].tap()
+        let marker = app.descendants(matching: .any)["focusMarker"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+        XCTAssertEqual(marker.label, "Shape number 77")
+        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        snapshot("14-big-puzzle-painted")
+        XCTAssertTrue(app.buttons["Home"].exists)
     }
 
     func testMoveModeLetsOneFingerScroll() {
@@ -165,6 +207,18 @@ final class ColorDrawUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// Opens the photo picker and picks one of the simulator's sample photos. The system picker
+    /// runs in its own process; its photos show up as images labelled like "Photo, March 30,
+    /// 2018, 3:14 PM". Paintings that earlier test runs saved today have no year in the label.
+    private func pickSamplePhoto() throws {
+        app.buttons["Photos"].tap()
+        let photo = app.images.matching(NSPredicate(format: "label MATCHES %@", "Photo, .*, [0-9]{4}, .*")).firstMatch
+        guard photo.waitForExistence(timeout: 10) else {
+            throw XCTSkip("The photo picker has no sample photos on this simulator")
+        }
+        photo.tap()
+    }
 
     /// Accepts a system permission alert if one shows up.
     private func allowSystemPrompt() {

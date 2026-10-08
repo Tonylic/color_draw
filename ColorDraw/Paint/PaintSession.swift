@@ -48,6 +48,9 @@ final class PaintSession {
     private(set) var helpNudge = 0
     /// Set when progress couldn't be saved (say, the device is full); cleared by the next good save.
     private(set) var saveFailed = false
+    /// Colors with unpainted shapes near the middle of the screen, closest first. With big
+    /// palettes the paint tray offers these, so the pot a child needs is close at hand.
+    private(set) var visibleColors: [Int] = []
     /// One finger moves the picture instead of painting.
     var isMoveMode = false {
         didSet { canvas?.setMoveMode(isMoveMode) }
@@ -81,12 +84,25 @@ final class PaintSession {
 
     var isComplete: Bool { progress.isComplete }
 
+    /// Pictures with many colors get the tray of on-screen colors plus the full color chart;
+    /// small palettes simply show every pot.
+    var usesLargePalette: Bool { puzzle.palette.count > Self.smallPaletteLimit }
+    nonisolated static let smallPaletteLimit = 12
+
+    /// Called by the canvas whenever the picture moves or a shape gets painted.
+    func updateVisibleColors(_ colors: [Int]) {
+        if colors != visibleColors { visibleColors = colors }
+    }
+
     var selectedPaint: RGBColor { puzzle.palette[selectedColor] }
 
     func appearance(of region: Int) -> RegionAppearance {
         let color = puzzle.regions[region].colorIndex
         if progress.filled[region] { return .painted(puzzle.palette[color]) }
-        return color == selectedColor && !progress.isComplete ? .highlighted : .blank
+        if color == selectedColor && !progress.isComplete { return .highlighted }
+        // Big photo puzzles show a pale ghost of the picture, so there's something to recognize
+        // among hundreds of shapes; small ones are a classic white coloring page.
+        return usesLargePalette ? .ghost(puzzle.palette[color]) : .blank
     }
 
     func select(color: Int) {
@@ -283,8 +299,10 @@ final class PaintSession {
         Haptics.success()
         cheerCount += 1
         showCheer(Self.cheers[cheerCount % Self.cheers.count])
-        // Hand the child the next paint pot automatically…
-        guard let next = progress.nextUnfinishedColor(after: selectedColor) else { return }
+        // Hand the child the next paint pot automatically: preferably one they can use right
+        // where they are looking…
+        guard let next = visibleColors.first(where: { !progress.isFinished(color: $0) })
+            ?? progress.nextUnfinishedColor(after: selectedColor) else { return }
         selectedColor = next
         canvas?.selectionChanged()
         // …and if none of its shapes are on screen, step back so the child can see them.

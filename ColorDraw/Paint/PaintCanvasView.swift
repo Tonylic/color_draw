@@ -138,12 +138,14 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.maximumZoomScale = maximumZoom
         numbersLayer.configure(puzzle: puzzle, filled: session.progress.filled, pixelSize: pixelSize, maximumZoom: maximumZoom)
         centerContent()
+        refreshVisibleColors()
+        updateOutlineStrength()
     }
 
     /// Enough zoom that even the smallest number becomes big enough to read comfortably.
     private static func maximumZoom(for puzzle: Puzzle, pixelSize: CGFloat) -> CGFloat {
         let smallest = puzzle.regions.map { NumberRenderer.fontSize(for: $0, in: puzzle, pixelSize: pixelSize) }.min() ?? 10
-        return min(14, max(3, 24 / max(smallest, 0.5)))
+        return min(10, max(3, 24 / max(smallest, 0.5)))
     }
 
     /// Centers the picture while it's smaller than the screen, and always leaves room to scroll
@@ -157,9 +159,25 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { contentView }
 
-    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerContent() }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerContent()
+        refreshVisibleColors()
+        updateOutlineStrength()
+    }
+
+    /// Pictures with hundreds of shapes are a dense web of lines when zoomed out, which hides the
+    /// picture. Their outlines start soft and become fully crisp as the child zooms in to paint.
+    private func updateOutlineStrength() {
+        guard session.usesLargePalette else { return }
+        let zoomedIn = min(1, max(0, (scrollView.zoomScale - 1) / 2))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        outlineLayer.opacity = Float(0.45 + 0.55 * zoomedIn)
+        CATransaction.commit()
+    }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        refreshVisibleColors()
         guard scrollView.isTracking || scrollView.isZooming || scrollView.isDecelerating else { return }
         // The child is moving the picture around: they're busy, not stuck. And the marker sits in
         // screen space, so it would drift away from its shape.
@@ -340,11 +358,13 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         focusMarker?.removeFromSuperview()
         buffer.update(region: region, to: session.appearance(of: region))
         numbersLayer.markFilled(region)
+        refreshVisibleColors()
         schedulePaintUpload()
         sparkle(at: region)
     }
 
     func selectionChanged() {
+        focusMarker?.removeFromSuperview()
         renderAllRegions()
     }
 
@@ -370,6 +390,29 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         var visible = scrollView.bounds
         visible.size.height -= Self.bottomControlsHeight
         return scrollView.convert(visible, to: contentView)
+    }
+
+    /// How many nearby colors are reported to the paint tray (it shows as many as fit).
+    static let nearbyColorCount = 12
+
+    /// Tells the session which colors have unpainted shapes closest to the middle of the screen:
+    /// the ones the child is looking at. Cheap enough for every scroll step (one distance per
+    /// shape); the session ignores unchanged results.
+    private func refreshVisibleColors() {
+        guard contentView.bounds.width > 0 else { return }
+        let visible = visibleContentRect
+        let center = CGPoint(x: visible.midX, y: visible.midY)
+        let pixelSize = contentView.bounds.width / CGFloat(puzzle.width)
+        var nearest: [Int: CGFloat] = [:]
+        for (index, region) in puzzle.regions.enumerated() where !session.progress.filled[index] {
+            let point = labelPoint(of: index)
+            guard visible.contains(point) else { continue }
+            // Close to the middle, with a head start for big shapes: those catch the eye first.
+            let score = hypot(point.x - center.x, point.y - center.y) - 2 * CGFloat(region.labelRadius) * pixelSize
+            if score < nearest[region.colorIndex, default: .infinity] { nearest[region.colorIndex] = score }
+        }
+        let closest = nearest.sorted { $0.value < $1.value }.prefix(Self.nearbyColorCount).map(\.key)
+        session.updateVisibleColors(Array(closest))
     }
 
     func isAnyUnpaintedRegionVisible(of color: Int) -> Bool {
@@ -418,10 +461,12 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
+        // Hundreds of outlines would turn a small picture of a big puzzle into a gray mesh.
+        let outlineAlpha: CGFloat = session.usesLargePalette ? 0.35 : 1
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             let rect = CGRect(origin: .zero, size: size)
             UIImage(cgImage: paintImage).draw(in: rect)
-            UIImage(cgImage: outlineImage).draw(in: rect)
+            UIImage(cgImage: outlineImage).draw(in: rect, blendMode: .normal, alpha: outlineAlpha)
         }
     }
 

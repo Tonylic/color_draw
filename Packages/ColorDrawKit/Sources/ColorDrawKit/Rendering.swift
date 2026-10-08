@@ -18,6 +18,16 @@ public struct CanvasStyle: Sendable {
         self.number = number
     }
 
+    /// The pale "ghost" of a paint: a light, washed-out hint of it (like a faded photo), light
+    /// enough for dark numbers to stay easy to read and clearly paler than real paint.
+    public func ghost(of paint: RGBColor) -> RGBColor {
+        let lab = paint.lab
+        let chroma = lab.chroma
+        // Keep a little of the hue so the picture is recognizable, never more than a tint.
+        let keep = chroma > 0 ? min(0.3, 11 / chroma) : 0
+        return LabColor(l: 84 + 0.13 * lab.l, a: lab.a * keep, b: lab.b * keep).rgb
+    }
+
     public static let standard = CanvasStyle(
         // Warm paper rather than pure white, so painting a white shape visibly changes it.
         blank: RGBColor(hex: 0xF9F6F0),
@@ -33,6 +43,9 @@ public struct CanvasStyle: Sendable {
 public enum RegionAppearance: Hashable, Sendable {
     /// Not painted yet.
     case blank
+    /// Not painted yet, showing a very pale gray hint of its final color. Pictures with hundreds of
+    /// shapes would otherwise be just a web of lines; this keeps the photo faintly recognizable.
+    case ghost(RGBColor)
     /// Not painted yet, and its color is the one selected: striped (in a light tint of the
     /// selected paint) so children can find it.
     case highlighted
@@ -88,6 +101,7 @@ public final class PaintBuffer {
         let colors: [UInt32] = lookup.map {
             switch $0 {
             case .blank: return blank
+            case let .ghost(paint): return style.ghost(of: paint).pixel
             case .highlighted: return 0 // Marker: draw stripes.
             case let .painted(color): return color.pixel
             }
@@ -115,6 +129,7 @@ public final class PaintBuffer {
         let (light, dark) = stripes
         let solid: UInt32? = switch appearance {
         case .blank: style.blank.pixel
+        case let .ghost(paint): style.ghost(of: paint).pixel
         case .highlighted: nil
         case let .painted(color): color.pixel
         }
@@ -199,8 +214,12 @@ public enum NumberRenderer {
     /// number inside its region, capped so huge areas don't get giant numbers.
     public static func fontSize(for region: PuzzleRegion, in puzzle: Puzzle, pixelSize: CGFloat) -> CGFloat {
         let diameter = CGFloat(region.labelRadius) * 2 * pixelSize
-        // Two-digit numbers are wider, so they need to shrink to stay inside the shape.
-        let widthFactor: CGFloat = region.colorIndex >= 9 ? 0.62 : 0.85
+        // Longer numbers are wider, so they need to shrink to stay inside the shape.
+        let widthFactor: CGFloat = switch region.colorIndex + 1 {
+        case ..<10: 0.85
+        case ..<100: 0.62
+        default: 0.46
+        }
         let cap = CGFloat(min(puzzle.width, puzzle.height)) * pixelSize * 0.09
         return min(diameter * widthFactor, cap)
     }
@@ -223,15 +242,20 @@ public enum NumberRenderer {
 }
 
 public enum PuzzleSnapshot {
-    /// A small picture of a puzzle, either blank (just outlines) or fully painted.
-    public static func thumbnail(of puzzle: Puzzle, painted: Bool, width: Int) -> CGImage? {
+    /// A small picture of a puzzle, either fully painted or not painted at all (just outlines, or
+    /// outlines over the pale ghost picture for `ghost`).
+    public static func thumbnail(of puzzle: Puzzle, painted: Bool, ghost: Bool = false, outlineOpacity: CGFloat = 1, width: Int) -> CGImage? {
         let scale = max(1, min(4, Int((Double(width * 2) / Double(puzzle.width)).rounded(.up))))
         let detail = DetailMap(puzzle: puzzle, scale: scale)
         return render(
             puzzle: puzzle,
             detail: detail,
-            appearance: { painted ? .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) : .blank },
-            outputWidth: width
+            appearance: { region in
+                let paint = puzzle.palette[puzzle.regions[region].colorIndex]
+                return painted ? .painted(paint) : (ghost ? .ghost(paint) : .blank)
+            },
+            outputWidth: width,
+            outlineOpacity: outlineOpacity
         )
     }
 
@@ -243,6 +267,7 @@ public enum PuzzleSnapshot {
         appearance: (Int) -> RegionAppearance,
         outputWidth: Int,
         showOutlines: Bool = true,
+        outlineOpacity: CGFloat = 1,
         numberFont: CTFont? = nil,
         style: CanvasStyle = .standard
     ) -> CGImage? {
@@ -257,8 +282,11 @@ public enum PuzzleSnapshot {
         let rect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
         context.interpolationQuality = .high
         context.draw(paint, in: rect)
-        if showOutlines, let outline = OutlineRenderer.makeImage(detail, color: style.outline) {
+        if showOutlines, outlineOpacity > 0, let outline = OutlineRenderer.makeImage(detail, color: style.outline) {
+            context.saveGState()
+            context.setAlpha(outlineOpacity)
             context.draw(outline, in: rect)
+            context.restoreGState()
         }
         if let numberFont {
             context.translateBy(x: 0, y: CGFloat(outputHeight))

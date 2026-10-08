@@ -5,8 +5,8 @@ import Foundation
 public struct PuzzleSettings: Hashable, Sendable {
     /// Upper bound on the number of paint colors.
     public var colorCount: Int
-    /// Upper bound on the number of shapes to paint. Busy photos are simplified down to this
-    /// many (the smallest shapes merge into their neighbors); simple ones may have fewer.
+    /// Optional upper bound on the number of shapes to paint. Busy photos are simplified down to
+    /// this many (the smallest shapes merge into their neighbors); simple ones may have fewer.
     public var maximumRegionCount: Int
     /// The photo is shrunk so its longest side is at most this many working pixels. Fewer pixels
     /// means bigger, simpler shapes.
@@ -26,7 +26,7 @@ public struct PuzzleSettings: Hashable, Sendable {
 
     public init(
         colorCount: Int,
-        maximumRegionCount: Int,
+        maximumRegionCount: Int = .max,
         maxDimension: Int,
         minimumRegionArea: Int,
         minimumRegionRadius: Float,
@@ -44,11 +44,11 @@ public struct PuzzleSettings: Hashable, Sendable {
         self.maximumAspectRatio = maximumAspectRatio
     }
 
-    /// For about five-year-olds: at most 50 big shapes in a few clearly different colors.
-    public static let easy = PuzzleSettings(colorCount: 6, maximumRegionCount: 50, maxDimension: 150, minimumRegionArea: 34, minimumRegionRadius: 2.5, smoothingPasses: 3, minimumColorDistance: 18)
-    public static let medium = PuzzleSettings(colorCount: 10, maximumRegionCount: 100, maxDimension: 200, minimumRegionArea: 28, minimumRegionRadius: 2.2, smoothingPasses: 3, minimumColorDistance: 14)
-    /// For about eight-year-olds: up to 200 shapes and more colors.
-    public static let hard = PuzzleSettings(colorCount: 14, maximumRegionCount: 200, maxDimension: 260, minimumRegionArea: 24, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 11)
+    /// For about five-year-olds: up to 50 colors, in fairly big shapes.
+    public static let easy = PuzzleSettings(colorCount: 50, maxDimension: 220, minimumRegionArea: 18, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 5)
+    public static let medium = PuzzleSettings(colorCount: 100, maxDimension: 300, minimumRegionArea: 14, minimumRegionRadius: 1.8, smoothingPasses: 1, minimumColorDistance: 4)
+    /// For about eight-year-olds: up to 200 colors and lots of detail.
+    public static let hard = PuzzleSettings(colorCount: 200, maxDimension: 400, minimumRegionArea: 12, minimumRegionRadius: 1.6, smoothingPasses: 1, minimumColorDistance: 3)
 }
 
 public enum PuzzleGeneratorError: Error, Equatable {

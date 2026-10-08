@@ -1,8 +1,8 @@
 import ColorDrawKit
 import SwiftUI
 
-/// How hard a photo puzzle is: at most how many shapes (50 for about five-year-olds up to 200 for
-/// about eight-year-olds) and how many colors. Simple photos can have fewer shapes.
+/// How hard a photo puzzle is: at most how many colors (50 for about five-year-olds, up to 200 for
+/// about eight-year-olds) and how much detail. Photos with fewer distinct colors get fewer.
 enum Difficulty: String, CaseIterable, Identifiable {
     case easy, medium, hard
 
@@ -146,6 +146,7 @@ struct CreatePuzzleView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .id(difficulty)
                     .accessibilityLabel("Preview of the coloring page")
+                    .accessibilityValue("\(difficulty.title), \(preview.puzzle.palette.count) colors")
             } else {
                 Image(decorative: photo.image, scale: 1)
                     .resizable()
@@ -212,7 +213,9 @@ struct CreatePuzzleView: View {
         let puzzle = preview.puzzle
         Task {
             let thumbnail = await Task.detached(priority: .userInitiated) {
-                PuzzleSnapshot.thumbnail(of: puzzle, painted: false, width: 360).map(UIImage.init(cgImage:))
+                let isLarge = puzzle.palette.count > PaintSession.smallPaletteLimit
+                return PuzzleSnapshot.thumbnail(of: puzzle, painted: false, ghost: isLarge, outlineOpacity: isLarge ? 0.35 : 1, width: 360)
+                    .map(UIImage.init(cgImage:))
             }.value
             let title = "Photo, " + Date().formatted(.dateTime.month(.abbreviated).day())
             do {
@@ -241,7 +244,7 @@ private struct DifficultyCard: View {
                     .font(.system(size: 40))
                 Text(difficulty.title)
                     .font(Theme.font(.headline))
-                Text("up to \(difficulty.settings.maximumRegionCount) shapes")
+                Text("up to \(difficulty.settings.colorCount) colors")
                     .font(Theme.font(.caption, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -263,7 +266,7 @@ private struct DifficultyCard: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.maximumRegionCount) shapes")
+        .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.colorCount) colors")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

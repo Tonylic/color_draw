@@ -117,6 +117,18 @@ struct RenderingTests {
         #expect(a == b)
     }
 
+    @Test func ghostsArePaleAndKeepNumbersReadable() {
+        let style = CanvasStyle.standard
+        let ink = style.number.luminance
+        for hex: UInt32 in [0x000000, 0x25285C, 0xFF0000, 0xFFFFFF, 0x40C057] {
+            let ghost = style.ghost(of: RGBColor(hex: hex))
+            #expect(ghost.lab.chroma <= 11.5, "Ghosts are only a pale tint")
+            #expect((ghost.luminance + 0.05) / (ink + 0.05) >= 4.5, "Numbers stay readable on ghosts")
+        }
+        // Darker paints leave darker ghosts, so the picture shows through.
+        #expect(style.ghost(of: RGBColor(hex: 0x000000)).lab.l < style.ghost(of: RGBColor(hex: 0xFFFFFF)).lab.l)
+    }
+
     @Test func outlinesAndSnapshotsRender() throws {
         let puzzle = SamplePicture.rainbow.makePuzzle()
         let detail = DetailMap(puzzle: puzzle, scale: 3)
@@ -132,6 +144,17 @@ struct RenderingTests {
         let thumbnail = try #require(PuzzleSnapshot.thumbnail(of: puzzle, painted: true, width: 120))
         #expect(thumbnail.width == 120)
         #expect(thumbnail.height == 120)
+    }
+
+    @Test func longerNumbersGetSmallerType() {
+        let puzzle = SamplePicture.kitty.makePuzzle()
+        var region = puzzle.regions[0]
+        let sizes = [0, 9, 99].map { colorIndex -> CGFloat in
+            region.colorIndex = colorIndex
+            return NumberRenderer.fontSize(for: region, in: puzzle, pixelSize: 1)
+        }
+        // 1, 10 and 100: each extra digit shrinks the type so the number stays inside its shape.
+        #expect(sizes[0] >= sizes[1] && sizes[1] >= sizes[2])
     }
 
     @Test func numbersFitTheirRegions() {

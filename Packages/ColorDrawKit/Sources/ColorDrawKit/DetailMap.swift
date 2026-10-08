@@ -34,7 +34,7 @@ public struct DetailMap: Sendable {
     public let margins: [UInt8]
 
     /// A scale that makes the longest side about `targetLongSide` pixels.
-    public static func recommendedScale(for puzzle: Puzzle, targetLongSide: Int = 1600) -> Int {
+    public static func recommendedScale(for puzzle: Puzzle, targetLongSide: Int = 2000) -> Int {
         let longest = max(puzzle.width, puzzle.height)
         return max(2, min(16, Int((Double(targetLongSide) / Double(longest)).rounded())))
     }
