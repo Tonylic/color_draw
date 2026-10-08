@@ -116,7 +116,7 @@ struct PuzzleGeneratorTests {
         for settings in [settings, settings.with(shape: .triangles), settings.organic] {
             let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: settings)
             expectValid(puzzle, settings: settings)
-            #expect(puzzle.palette.count >= 2, "\(level) should keep several colors")
+            #expect(puzzle.palette.count >= 2, "\(level) \(settings.tiles?.shape.rawValue ?? "organic") should keep several colors")
         }
     }
 
@@ -127,9 +127,10 @@ struct PuzzleGeneratorTests {
         for settings in [settings, settings.with(shape: .triangles), settings.organic] {
             let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
             expectValid(puzzle, settings: settings)
-            #expect(puzzle.palette.count <= limit, "\(level) allows at most \(limit) colors")
+            let name = "\(level) \(settings.tiles?.shape.rawValue ?? "organic")"
+            #expect(puzzle.palette.count <= limit, "\(name) allows at most \(limit) colors")
             // A very colorful photo uses most of the level's colors.
-            #expect(puzzle.palette.count >= limit * 6 / 10, "\(level) made only \(puzzle.palette.count) colors")
+            #expect(puzzle.palette.count >= limit * 6 / 10, "\(name) made only \(puzzle.palette.count) colors")
         }
     }
 
@@ -309,6 +310,13 @@ struct ColorTests {
             }
         }
         #expect(PaintBuffer.stripeColors(for: RGBColor(hex: 0xF1F3F5)) == nil, "Grays use neutral stripes")
+        let ink = CanvasStyle.standard.number.luminance
+        for stripe in [CanvasStyle.standard.highlightLight, CanvasStyle.standard.highlightDark] {
+            #expect((stripe.luminance + 0.05) / (ink + 0.05) >= 4.5)
+        }
+        // Neutral stripes stand out from the gray ghost of a black or gray paint.
+        let ghost = CanvasStyle.standard.ghost(of: RGBColor(hex: 0x222222)).lab
+        #expect(CanvasStyle.standard.highlightDark.lab.distanceSquared(to: ghost).squareRoot() > 12)
     }
 
     @Test func pixelPacking() {

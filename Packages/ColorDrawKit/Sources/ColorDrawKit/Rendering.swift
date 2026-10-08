@@ -31,9 +31,10 @@ public struct CanvasStyle: Sendable {
     public static let standard = CanvasStyle(
         // Warm paper rather than pure white, so painting a white shape visibly changes it.
         blank: RGBColor(hex: 0xF9F6F0),
-        // Neutral stripes for gray, black, white and beige paints, which have no tint to show.
-        highlightLight: RGBColor(hex: 0xE3E3EB),
-        highlightDark: RGBColor(hex: 0xC8CAD6),
+        // Lavender stripes for gray, black, white and beige paints, which have no tint to show:
+        // clearly different from the gray ghosts of those paints.
+        highlightLight: RGBColor(hex: 0xECE8FA),
+        highlightDark: RGBColor(hex: 0xD2CAF2),
         outline: RGBColor(hex: 0x4C4560),
         number: RGBColor(hex: 0x5A5372)
     )
@@ -64,8 +65,12 @@ public final class PaintBuffer {
     private var pixels: [UInt32]
     private let stripePeriod: Int
     private var stripes: (light: UInt32, dark: UInt32)
-    /// Mosaics: how strongly each pixel is covered by a grid line (0–255).
-    private let gridLines: [UInt8]?
+    private let gridLineOpacity: Float
+    /// Mosaics: how strongly each pixel is covered by a grid line (0–255). Made on first use,
+    /// so a fully painted picture never needs it.
+    private lazy var gridLines: [UInt8]? = detail.tiling != nil && gridLineOpacity > 0
+        ? Self.gridLineCoverage(detail, opacity: gridLineOpacity)
+        : nil
 
     /// How dark grid lines are, as a fraction of the outline color: lighter for small tiles, whose
     /// dense grid would otherwise veil the picture when it's seen whole.
@@ -81,17 +86,14 @@ public final class PaintBuffer {
         pixels = [UInt32](repeating: style.blank.pixel, count: detail.width * detail.height)
         stripePeriod = max(10, detail.scale * 3)
         stripes = (style.highlightLight.pixel, style.highlightDark.pixel)
-        if detail.tiling != nil, gridLineOpacity > 0 {
-            gridLines = Self.gridLineCoverage(detail, opacity: gridLineOpacity)
-        } else {
-            gridLines = nil
-        }
+        self.gridLineOpacity = gridLineOpacity
     }
 
     /// Anti-aliased lines along the tiles' shared edges, about 3.5% of a tile wide (at least
     /// 1.4 pixels).
     private static func gridLineCoverage(_ detail: DetailMap, opacity: Float) -> [UInt8] {
-        let tileSize = Float(PuzzleGenerator.tilePixels) * Float(detail.scale)
+        // The side of a square of the same area as a tile.
+        let tileSize = (Float(detail.width * detail.height) / Float(max(1, detail.bounds.count))).squareRoot()
         let halfWidth = max(0.7, tileSize * 0.0175)
         let strength = gridLineStrength(tileSize: tileSize) * min(1, opacity) * 255
         return detail.margins.map { margin in
@@ -152,6 +154,7 @@ public final class PaintBuffer {
             if case .painted = $0 { return false }
             return true
         }
+        let gridLines = lined.contains(true) ? self.gridLines : nil
         let lineColor = style.outline.pixel
         detail.labels.withUnsafeBufferPointer { labels in
             pixels.withUnsafeMutableBufferPointer { out in
@@ -240,7 +243,10 @@ public enum OutlineRenderer {
     /// than the pixel staircase of the region map, so it stays smooth when the picture is zoomed
     /// in. Where the margins don't describe a border (regions restored without smoothing), the
     /// border pixels are simply drawn solid.
+    /// Mosaics carry their grid lines in the paint (see `PaintBuffer`), so for them this returns
+    /// `nil`.
     public static func makeImage(_ detail: DetailMap, color: RGBColor) -> CGImage? {
+        guard detail.tiling == nil else { return nil }
         let w = detail.width, h = detail.height
         var pixels = [UInt32](repeating: 0, count: w * h)
         detail.labels.withUnsafeBufferPointer { labels in
@@ -293,7 +299,8 @@ public enum NumberRenderer {
     public static func fontSize(for region: PuzzleRegion, in puzzle: Puzzle, pixelSize: CGFloat) -> CGFloat {
         let diameter = CGFloat(region.labelRadius) * 2 * pixelSize
         // Longer numbers are wider, so they need to shrink to stay inside the shape. In a mosaic
-        // every number gets the size of the longest one, so the grid looks even.
+        // every number is sized for the longest one (single digits are as big as double digits),
+        // so the grid looks even.
         let widthFactor: CGFloat = switch puzzle.tiling != nil ? puzzle.palette.count : region.colorIndex + 1 {
         case ..<10: 0.85
         case ..<100: 0.62
@@ -321,6 +328,19 @@ public enum NumberRenderer {
 }
 
 public enum PuzzleSnapshot {
+    /// A transparent image, one pixel per working pixel, with `regions` filled in `color`: a
+    /// quick overlay to make those regions light up.
+    public static func mask(of puzzle: Puzzle, regions: some Sequence<Int>, color: RGBColor) -> CGImage? {
+        var included = [Bool](repeating: false, count: puzzle.regions.count)
+        for region in regions where included.indices.contains(region) { included[region] = true }
+        let paint = color.pixel
+        var pixels = [UInt32](repeating: 0, count: puzzle.width * puzzle.height)
+        for (p, region) in puzzle.regionMap.enumerated() where included[Int(region)] {
+            pixels[p] = paint
+        }
+        return CGImage.make(pixels: pixels, width: puzzle.width, height: puzzle.height, alpha: .premultipliedLast)
+    }
+
     /// A small picture of a puzzle, either fully painted or not painted at all (just outlines, or
     /// outlines over the pale ghost picture for `ghost`). Painted mosaics have no grid lines.
     public static func thumbnail(of puzzle: Puzzle, painted: Bool, ghost: Bool = false, outlineOpacity: CGFloat = 1, width: Int) -> CGImage? {

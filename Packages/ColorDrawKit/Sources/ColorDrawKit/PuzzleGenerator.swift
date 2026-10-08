@@ -49,19 +49,22 @@ public struct PuzzleSettings: Hashable, Sendable {
         self.maximumAspectRatio = maximumAspectRatio
     }
 
-    /// For about five-year-olds: up to 50 colors, in big tiles.
+    /// For about five-year-olds: up to 50 clearly different colors, in big tiles (about 700 in
+    /// a 3:2 photo).
     public static let easy = PuzzleSettings(
-        colorCount: 50, tiles: TileSettings(shape: .squares, alongLongSide: 40, speckleDistance: 14),
-        maxDimension: 220, minimumRegionArea: 18, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 7
+        colorCount: 50, tiles: TileSettings(shape: .squares, alongLongSide: 32, speckleDistance: 14),
+        maxDimension: 220, minimumRegionArea: 18, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 10
     )
+    /// About 2,100 tiles in a 3:2 photo.
     public static let medium = PuzzleSettings(
-        colorCount: 100, tiles: TileSettings(shape: .squares, alongLongSide: 64, speckleDistance: 11),
-        maxDimension: 300, minimumRegionArea: 14, minimumRegionRadius: 1.8, smoothingPasses: 1, minimumColorDistance: 5
+        colorCount: 100, tiles: TileSettings(shape: .squares, alongLongSide: 56, speckleDistance: 11),
+        maxDimension: 300, minimumRegionArea: 14, minimumRegionRadius: 1.8, smoothingPasses: 1, minimumColorDistance: 7
     )
-    /// For about eight-year-olds: up to 200 colors and lots of detail.
+    /// For about eight-year-olds: up to 200 colors and lots of detail (about 4,300 tiles in a 3:2
+    /// photo).
     public static let hard = PuzzleSettings(
-        colorCount: 200, tiles: TileSettings(shape: .squares, alongLongSide: 96, speckleDistance: 8),
-        maxDimension: 400, minimumRegionArea: 12, minimumRegionRadius: 1.6, smoothingPasses: 1, minimumColorDistance: 4
+        colorCount: 200, tiles: TileSettings(shape: .squares, alongLongSide: 80, speckleDistance: 8),
+        maxDimension: 400, minimumRegionArea: 12, minimumRegionRadius: 1.6, smoothingPasses: 1, minimumColorDistance: 6
     )
 
     /// The same settings with another tile shape.
@@ -124,8 +127,9 @@ public enum PuzzleGenerator {
         return image
     }
 
-    /// Builds a puzzle from a bitmap. Without tile settings the bitmap must already be at working
-    /// size.
+    /// Builds a puzzle from a bitmap. With tile settings it becomes a mosaic; otherwise (or should
+    /// the bitmap somehow not convert) its shapes follow its outlines, and the bitmap must
+    /// already be at working size.
     public static func generate(from image: RGBAImage, settings: PuzzleSettings) -> Puzzle {
         if settings.tiles != nil, let cgImage = image.makeCGImage(), let puzzle = try? generate(from: cgImage, settings: settings) {
             return puzzle

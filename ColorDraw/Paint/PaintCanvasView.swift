@@ -39,12 +39,16 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private var dirtyTiles = IndexSet()
     private static let tileSize = 256
     private let outlineLayer = CALayer()
+    /// Lights up the shapes of a newly chosen paint for a moment (see `flashSelection`).
+    private let flashLayer = CALayer()
     private let numbersLayer = NumbersLayer()
     private let effectsView = UIView()
     private let buffer: PaintBuffer
     private var outlineImage: CGImage?
     /// Square mosaics are drawn pixel-sharp once zoomed in far enough (see `updatePaintFilter`).
     private var usesSharpPixels = false
+    /// A small map for drawing small pictures of a mosaic in progress (see `snapshot`).
+    private var snapshotDetail: DetailMap?
     private var needsPaintUpload = false
     private var laidOutSize: CGSize = .zero
     private var lastStrokePoint: CGPoint?
@@ -92,6 +96,12 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.addSubview(contentView)
 
         contentView.layer.addSublayer(paintTilesLayer)
+        flashLayer.contentsGravity = .resize
+        flashLayer.magnificationFilter = .linear
+        flashLayer.opacity = 0
+        flashLayer.cornerRadius = 6
+        flashLayer.masksToBounds = true
+        contentView.layer.addSublayer(flashLayer)
         outlineLayer.contentsGravity = .resize
         outlineLayer.magnificationFilter = .linear
         outlineLayer.minificationFilter = .trilinear
@@ -162,7 +172,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.zoomScale = 1
         contentView.frame = CGRect(origin: .zero, size: size)
         scrollView.contentSize = size
-        for layer in [paintTilesLayer, outlineLayer, numbersLayer] as [CALayer] {
+        for layer in [paintTilesLayer, flashLayer, outlineLayer, numbersLayer] as [CALayer] {
             layer.frame = contentView.bounds
         }
         layoutPaintTiles()
@@ -480,6 +490,30 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     func selectionChanged() {
         focusMarker?.removeFromSuperview()
         renderAllRegions()
+        flashSelection()
+    }
+
+    /// Every unpainted shape of the paint in hand blinks twice in that paint, so a child sees at
+    /// a glance where it goes — even tiny tiles of a big mosaic seen whole, where stripes are
+    /// too fine to notice. With Reduce Motion it fades in and out once instead.
+    func flashSelection() {
+        guard !session.isComplete else { return }
+        let color = session.selectedColor
+        let filled = session.progress.filled
+        let shapes = puzzle.regions.indices.filter { !filled[$0] && puzzle.regions[$0].colorIndex == color }
+        flashLayer.removeAnimation(forKey: "flash")
+        flashLayer.contents = PuzzleSnapshot.mask(of: puzzle, regions: shapes, color: puzzle.palette[color])
+        let flash = CAKeyframeAnimation(keyPath: "opacity")
+        if UIAccessibility.isReduceMotionEnabled {
+            flash.values = [0, 0.7, 0]
+            flash.keyTimes = [0, 0.4, 1]
+            flash.duration = 1.2
+        } else {
+            flash.values = [0, 0.85, 0.15, 0.85, 0]
+            flash.keyTimes = [0, 0.2, 0.5, 0.7, 1]
+            flash.duration = 1.4
+        }
+        flashLayer.add(flash, forKey: "flash")
     }
 
     func zoom(by factor: CGFloat) {
@@ -557,9 +591,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     func focus(on region: Int) {
         let center = labelPoint(of: region)
-        // Zoom in until the number is comfortably big (but never zoom out).
+        // Zoom in until the number is comfortably big (but never zoom out). Mosaics stop sooner,
+        // so the child still sees the tiles around it.
         let fontSize = NumberRenderer.fontSize(for: puzzle.regions[region], in: puzzle, pixelSize: contentView.bounds.width / CGFloat(puzzle.width))
-        let wanted = min(scrollView.maximumZoomScale, max(scrollView.zoomScale, 30 / max(fontSize, 1)))
+        let comfortable: CGFloat = puzzle.tiling != nil ? 18 : 30
+        let wanted = min(scrollView.maximumZoomScale, max(scrollView.zoomScale, comfortable / max(fontSize, 1)))
         zoom(to: center, scale: wanted) { [weak self] finished in
             if finished { self?.showFocusMarker(on: region) }
         }
@@ -575,8 +611,20 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     func nearestUnpaintedRegion(of color: Int) -> Int? {
         let visibleCenter = scrollView.convert(CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY), to: contentView)
         let pixelSize = contentView.bounds.width / CGFloat(puzzle.width)
-        return puzzle.regions.indices
-            .filter { !session.progress.filled[$0] && puzzle.regions[$0].colorIndex == color }
+        let filled = session.progress.filled
+        let candidates = puzzle.regions.indices.filter { !filled[$0] && puzzle.regions[$0].colorIndex == color }
+        if puzzle.tiling != nil {
+            // All tiles are the same size: prefer one in the middle of a patch of its color over
+            // a lone speck nearby. It's easier to spot, and a swipe there paints many.
+            let tileSize = CGFloat(puzzle.regions.first?.labelRadius ?? 1) * 2 * pixelSize
+            let scored = candidates.map { tile -> (tile: Int, score: CGFloat) in
+                let point = labelPoint(of: tile)
+                let distance = hypot(point.x - visibleCenter.x, point.y - visibleCenter.y)
+                return (tile, (distance + tileSize * 4) / CGFloat(1 + session.patchSize(around: tile)))
+            }
+            return scored.min { $0.score < $1.score }?.tile
+        }
+        return candidates
             .min { a, b in
                 let pa = labelPoint(of: a), pb = labelPoint(of: b)
                 // Prefer close shapes, but give big ones a head start: they're easier to find.
@@ -587,6 +635,22 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func snapshot(width: CGFloat) -> UIImage? {
+        // Hundreds of outlines would turn a small picture of a big puzzle into a gray mesh.
+        let outlineAlpha: CGFloat = session.usesLargePalette ? 0.35 : 1
+        if puzzle.tiling != nil && !session.isComplete {
+            // The canvas draws a mosaic's grid lines into the paint at full strength; a small
+            // picture gets fainter ones, like the thumbnail made when the puzzle was created.
+            let scale = max(1, min(4, Int((Double(width) * 2 / Double(puzzle.width)).rounded(.up))))
+            if snapshotDetail?.scale != scale { snapshotDetail = DetailMap(puzzle: puzzle, scale: scale) }
+            guard let detail = snapshotDetail else { return nil }
+            return PuzzleSnapshot.render(
+                puzzle: puzzle,
+                detail: detail,
+                appearance: { [session] in session.appearance(of: $0) },
+                outputWidth: Int(width),
+                outlineOpacity: outlineAlpha
+            ).map(UIImage.init(cgImage:))
+        }
         // Read the buffer, not the layer: the layer's bitmap is refreshed on the next run loop,
         // so it can still miss the shape that was just painted.
         guard let paintImage = buffer.makeImage() else { return nil }
@@ -594,8 +658,6 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
-        // Hundreds of outlines would turn a small picture of a big puzzle into a gray mesh.
-        let outlineAlpha: CGFloat = session.usesLargePalette ? 0.35 : 1
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             let rect = CGRect(origin: .zero, size: size)
             UIImage(cgImage: paintImage).draw(in: rect)

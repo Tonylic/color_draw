@@ -118,7 +118,7 @@ struct PaintView: View {
             guard (try? await Task.sleep(for: .seconds(0.8))) != nil else { return }
             session.showStartHint()
             // Say the first tip out loud for children who can't read yet (only the first few times).
-            if showsStartTip && startTipsSpoken < 3 && !UIAccessibility.isVoiceOverRunning && SoundPlayer.shared.say(Self.startTip) {
+            if showsStartTip && startTipsSpoken < 3 && !UIAccessibility.isVoiceOverRunning && SoundPlayer.shared.say(startTip) {
                 startTipsSpoken += 1
             }
             while (try? await Task.sleep(for: .seconds(2))) != nil {
@@ -140,7 +140,10 @@ struct PaintView: View {
         .onDisappear { session.tearDown() }
     }
 
-    private static let startTip = "Tap the striped shapes!"
+    /// Mosaics are painted best by swiping across runs of tiles; outlined pictures by tapping.
+    private var startTip: String {
+        session.puzzle.tiling != nil ? "Swipe over the stripes!" : "Tap the striped shapes!"
+    }
 
     private var showsStartTip: Bool {
         session.progress.filledCount == 0 && !session.isComplete && !startTipExpired
@@ -202,7 +205,7 @@ struct PaintView: View {
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                 .allowsHitTesting(false)
         } else if showsStartTip {
-            CheerBubble(text: Self.startTip, systemImage: "hand.tap.fill")
+            CheerBubble(text: startTip, systemImage: session.puzzle.tiling != nil ? "hand.draw.fill" : "hand.tap.fill")
                 .transition(.opacity)
                 .allowsHitTesting(false)
         } else {

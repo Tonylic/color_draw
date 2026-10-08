@@ -26,9 +26,9 @@ paint color, and little fingers tap or swipe across the tiles to fill them in.
 
   | Level | Colors (at most) | Tiles on the long side | Tiles in a 3:2 photo | Made for |
   |---|---|---|---|---|
-  | 🐣 Easy | 50 | 40 | about 1,100 | about 5 years old |
-  | 🐰 Medium | 100 | 64 | about 2,800 | in between |
-  | 🦁 Tricky | 200 | 96 | about 6,100 | about 8 years old |
+  | 🐣 Easy | 50 | 32 | about 700 | about 5 years old |
+  | 🐰 Medium | 100 | 56 | about 2,100 | in between |
+  | 🦁 Tricky | 200 | 80 | about 4,300 | about 8 years old |
 
   The color numbers are limits: a colorful photo uses up to that many paints, while a photo
   with fewer distinct colors gets fewer. Triangles come in about the same number as squares.
@@ -82,7 +82,7 @@ Reduce Motion, and its sounds follow the silent switch.
 The engine lives in [`Packages/ColorDrawKit`](Packages/ColorDrawKit) and is plain Swift and Core
 Graphics, so it is unit-tested on the Mac.
 
-1. **Lay out the tiles** (`Tiling.swift`): 40, 64 or 96 squares along the long side, or as many
+1. **Lay out the tiles** (`Tiling.swift`): 32, 56 or 80 squares along the long side, or as many
    equilateral triangles of the same size. Panoramas are first cropped to at most 2:1, and the
    photo is trimmed a hair so the grid fits exactly. Each square is 8 working pixels wide.
 2. **Smooth** the photo with an edge-preserving bilateral filter in CIE L\*a\*b\* space, which
@@ -95,8 +95,9 @@ Graphics, so it is unit-tested on the Mac.
    tile whose neighbors share a very similar color joins them, and colors used by only a tile
    or two merge into a similar neighbor, so there are fewer specks to hunt for and longer runs
    to swipe. Strongly different details, like a sparkle in an eye, stay.
-5. **Number the tiles** at the center of the biggest circle inside each one. In a mosaic every
-   number is the same size, so the grid looks even.
+5. **Number the tiles** at the center of the biggest circle inside each one. Every number is
+   sized for the longest one, so single digits are as big as double digits and the grid looks
+   even (only the half triangles at the edges get smaller numbers).
 6. **Draw the tiles** straight from their geometry at about 2,000 pixels on the long side, with
    anti-aliased grid lines only on tiles that aren't painted yet. Painting, hit testing and
    lines all use this map, so what kids see is exactly what responds to their finger. Zoomed

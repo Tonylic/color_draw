@@ -78,12 +78,22 @@ extension PuzzleGenerator {
 
     /// The tile grid for a photo of the given size, and the picture's size in working pixels.
     static func planTiling(imageWidth: Int, imageHeight: Int, tiles: TileSettings) -> (tiling: Tiling, width: Int, height: Int) {
+        var long = max(2, tiles.alongLongSide)
+        while true {
+            let plan = planTiling(imageWidth: imageWidth, imageHeight: imageHeight, shape: tiles.shape, alongLongSide: long)
+            // Region ids are 16-bit: absurdly fine grids get coarser until they fit.
+            if plan.tiling.tileCount <= Tiling.maximumTileCount || long <= 2 { return plan }
+            long = long * 9 / 10
+        }
+    }
+
+    private static func planTiling(imageWidth: Int, imageHeight: Int, shape: Tiling.Shape, alongLongSide: Int) -> (tiling: Tiling, width: Int, height: Int) {
         let aspect = Double(max(imageWidth, 1)) / Double(max(imageHeight, 1))
-        let long = Double(max(2, tiles.alongLongSide))
+        let long = Double(alongLongSide)
         // The picture's size, measured in square tiles.
         let across = aspect >= 1 ? long : max(1, (long * aspect).rounded())
         let down = aspect >= 1 ? max(1, (long / aspect).rounded()) : long
-        switch tiles.shape {
+        switch shape {
         case .squares:
             let tiling = Tiling(shape: .squares, columns: Int(across), rows: Int(down))
             return (tiling, tiling.columns * Int(tilePixels), tiling.rows * Int(tilePixels))

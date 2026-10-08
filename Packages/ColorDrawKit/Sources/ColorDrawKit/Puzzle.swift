@@ -117,7 +117,8 @@ public struct Puzzle: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(Self.formatVersion, forKey: .version)
+        // Puzzles without tiles stay readable by builds from before mosaics.
+        try container.encode(tiling == nil ? 1 : Self.formatVersion, forKey: .version)
         try container.encode(width, forKey: .width)
         try container.encode(height, forKey: .height)
         var data = Data(capacity: regionMap.count * 2)

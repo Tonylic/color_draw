@@ -24,9 +24,13 @@ public struct Tiling: Codable, Hashable, Sendable {
 
     public var tileCount: Int { columns * rows }
 
+    /// Region ids are 16-bit, so a puzzle has at most this many tiles.
+    public static let maximumTileCount = Int(UInt16.max)
+
     /// Whether the layout makes sense at all (triangle rows need a left and a right half).
     var isValid: Bool {
         rows >= 1 && columns >= (shape == .triangles ? 2 : 1) && columns <= 4096 && rows <= 4096
+            && tileCount <= Self.maximumTileCount
     }
 
     @inline(__always)

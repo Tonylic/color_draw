@@ -251,4 +251,72 @@ struct TilingTests {
         #expect(old == puzzle)
         #expect(old.tiling == nil)
     }
+
+    @Test func absurdlyFineGridsStayWithinSixteenBitRegionIDs() throws {
+        let plan = PuzzleGenerator.planTiling(imageWidth: 1000, imageHeight: 1000, tiles: TileSettings(shape: .squares, alongLongSide: 300, speckleDistance: 8))
+        #expect(plan.tiling.tileCount <= Tiling.maximumTileCount)
+        #expect(plan.tiling.isValid)
+        let photo = try #require(makeNoisyPhoto(width: 100, height: 100).makeCGImage())
+        var settings = PuzzleSettings.hard.with(shape: .triangles)
+        settings.tiles?.alongLongSide = 400
+        let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
+        #expect(puzzle.regions.count <= Tiling.maximumTileCount)
+    }
+
+    @Test func outOfRangeTilesAreRejected() throws {
+        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .easy)
+        let original = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(puzzle)) as? [String: Any])
+        for (key, value) in [("rows", 0), ("columns", -3), ("columns", Int.max), ("rows", 5000)] {
+            var json = original
+            var tiling = try #require(json["tiling"] as? [String: Any])
+            tiling[key] = value
+            json["tiling"] = tiling
+            #expect(throws: DecodingError.self) {
+                try JSONDecoder().decode(Puzzle.self, from: JSONSerialization.data(withJSONObject: json))
+            }
+        }
+    }
+
+    @Test func puzzlesWithoutTilesStayReadableByOlderBuilds() throws {
+        let organic = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(SamplePicture.kitty.makePuzzle())) as? [String: Any])
+        #expect(organic["version"] as? Int == 1)
+        let mosaic = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .easy))) as? [String: Any])
+        #expect(mosaic["version"] as? Int == 2)
+    }
+
+    @Test(arguments: Tiling.Shape.allCases)
+    func paintingTilesOneByOneMatchesARedraw(shape: Tiling.Shape) throws {
+        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: PuzzleSettings.easy.with(shape: shape))
+        let detail = DetailMap(puzzle: puzzle, scale: 3)
+        let appearance: (Int) -> RegionAppearance = { index in
+            let paint = puzzle.palette[puzzle.regions[index].colorIndex]
+            switch index % 3 {
+            case 0: return .painted(paint)
+            case 1: return .ghost(paint)
+            default: return puzzle.regions[index].colorIndex == 0 ? .highlighted : .blank
+            }
+        }
+        let whole = PaintBuffer(detail: detail)
+        whole.render(appearance)
+        let piecewise = PaintBuffer(detail: detail)
+        piecewise.render { _ in .blank }
+        for index in puzzle.regions.indices { piecewise.update(region: index, to: appearance(index)) }
+        let a = try #require(whole.makeImage()?.dataProvider?.data as Data?)
+        let b = try #require(piecewise.makeImage()?.dataProvider?.data as Data?)
+        #expect(a == b)
+    }
+
+    @Test func smallPicturesOfAMosaicHaveFainterGridLines() throws {
+        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .easy)
+        let detail = DetailMap(puzzle: puzzle, scale: 4)
+        func edgeDarkness(opacity: CGFloat) throws -> Int {
+            let image = try #require(PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { _ in .blank }, outputWidth: detail.width, outlineOpacity: opacity))
+            let data = try #require(image.dataProvider?.data as Data?)
+            // Pixel 31 lies on the edge tiles 0 and 1 share.
+            let i = 16 * image.bytesPerRow + 31 * 4
+            return 255 - Int(data[i + 1])
+        }
+        let full = try edgeDarkness(opacity: 1), faint = try edgeDarkness(opacity: 0.35), none = try edgeDarkness(opacity: 0)
+        #expect(full > faint && faint > none)
+    }
 }

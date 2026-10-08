@@ -7,6 +7,8 @@ import UIKit
 protocol PaintCanvasControlling: AnyObject {
     func regionPainted(_ region: Int)
     func selectionChanged()
+    /// Briefly lights up every unpainted shape of the selected color.
+    func flashSelection()
     func zoom(by factor: CGFloat)
     func zoomToFit()
     /// Zooms to a region so its number is easy to read, and makes it pulse.
@@ -226,6 +228,7 @@ final class PaintSession {
     /// pulses — in a mosaic, a tile in the middle of the biggest patch of it.
     func showStartHint() {
         guard progress.filledCount == 0 else { return }
+        canvas?.flashSelection()
         let candidates = unpaintedRegions(of: selectedColor)
         let start: Int?
         if let tiling = puzzle.tiling {
@@ -243,7 +246,12 @@ final class PaintSession {
         if let start { canvas?.point(at: start) }
     }
 
-    /// How many unpainted tiles of a tile's color lie in the block of tiles around it.
+    /// How many unpainted tiles of a tile's color lie in the block of tiles around it (1 for
+    /// pictures that aren't mosaics).
+    func patchSize(around tile: Int) -> Int {
+        puzzle.tiling.map { patchSize(around: tile, in: $0) } ?? 1
+    }
+
     private func patchSize(around tile: Int, in tiling: Tiling) -> Int {
         let (row, column) = tiling.position(of: tile)
         let color = puzzle.regions[tile].colorIndex
@@ -374,9 +382,11 @@ final class PaintSession {
             showCheer(Self.cheers[cheerCount % Self.cheers.count])
         }
         // Hand the child the next paint pot automatically: preferably one they can use right
-        // where they are looking…
-        guard let next = visibleColors.first(where: { !progress.isFinished(color: $0) })
-            ?? progress.nextUnfinishedColor(after: selectedColor) else { return }
+        // where they are looking (in a mosaic, the one with the most tiles left to swipe)…
+        let onScreen = visibleColors.filter { !progress.isFinished(color: $0) }
+        let remaining = progress.remainingByColor
+        let preferred = puzzle.tiling != nil ? onScreen.max { remaining[$0] < remaining[$1] } : onScreen.first
+        guard let next = preferred ?? progress.nextUnfinishedColor(after: selectedColor) else { return }
         selectedColor = next
         canvas?.selectionChanged()
         // …and if none of its shapes are on screen, step back so the child can see them.
