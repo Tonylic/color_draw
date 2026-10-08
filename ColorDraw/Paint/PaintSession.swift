@@ -136,7 +136,7 @@ final class PaintSession {
             Haptics.oops()
             // Tapping the same shape again soon: hand over the right paint and paint it, so nobody
             // gets stuck.
-            if let last = lastWrongTap, last.region == region, Date().timeIntervalSince(last.date) < 10 {
+            if let last = lastWrongTap, last.region == region, Date().timeIntervalSince(last.date) < 20 {
                 lastWrongTap = nil
                 select(color: expected)
                 return paint(region: region, isTap: true)

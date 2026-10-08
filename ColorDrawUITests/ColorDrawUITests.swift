@@ -58,6 +58,11 @@ final class ColorDrawUITests: XCTestCase {
         sleep(1)
         snapshot("04-celebration")
 
+        // Saving asks for permission to add to Photos the first time.
+        app.buttons["Save to Photos"].tap()
+        allowSystemPrompt()
+        XCTAssertTrue(app.buttons["Saved to Photos"].waitForExistence(timeout: 10), "The painting should be saved")
+
         app.buttons["Look"].tap()
         XCTAssertEqual(progressValue, "100 percent painted")
         snapshot("05-finished")
@@ -160,6 +165,18 @@ final class ColorDrawUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// Accepts a system permission alert if one shows up.
+    private func allowSystemPrompt() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["Allow", "Allow Access", "Allow Full Access", "OK"] {
+            let button = springboard.buttons[label]
+            if button.waitForExistence(timeout: label == "Allow" ? 5 : 1) {
+                button.tap()
+                return
+            }
+        }
+    }
 
     /// A paint pot, labelled like "Color 3, orange".
     private func pot(_ number: Int) -> XCUIElement {

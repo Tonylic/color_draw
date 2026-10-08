@@ -69,6 +69,24 @@ func render(_ puzzle: Puzzle, name: String, into directory: URL, seconds: Double
     return (blank, done)
 }
 
+/// A magnified crop of a sample's outlines over its paint, the way Core Animation shows them when
+/// zoomed in (bilinear filtering), for judging how smooth the lines are.
+func renderZoomedCrop(_ sample: SamplePicture, to url: URL) {
+    let puzzle = sample.makePuzzle()
+    let detail = DetailMap(puzzle: puzzle, scale: DetailMap.recommendedScale(for: puzzle))
+    let buffer = PaintBuffer(detail: detail)
+    buffer.render { .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) }
+    guard let paint = buffer.makeImage(), let outline = OutlineRenderer.makeImage(detail, color: CanvasStyle.standard.outline) else { return }
+    let crop = CGRect(x: detail.width * 2 / 5, y: detail.height / 4, width: 140, height: 140)
+    guard let paintCrop = paint.cropping(to: crop), let outlineCrop = outline.cropping(to: crop) else { return }
+    let size = 840
+    guard let context = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    context.interpolationQuality = .low // Bilinear, like a magnified CALayer.
+    context.draw(paintCrop, in: CGRect(x: 0, y: 0, width: size, height: size))
+    context.draw(outlineCrop, in: CGRect(x: 0, y: 0, width: size, height: size))
+    if let image = context.makeImage() { writePNG(image, to: url) }
+}
+
 let arguments = CommandLine.arguments.dropFirst()
 guard let outputPath = arguments.first else {
     print("usage: puzzle-preview <output-dir> [photo ...]")
@@ -79,6 +97,7 @@ try? FileManager.default.createDirectory(at: output, withIntermediateDirectories
 
 let photos = Array(arguments.dropFirst())
 if photos.isEmpty {
+    renderZoomedCrop(.rocket, to: output.appendingPathComponent("rocket-zoomed-outline.png"))
     for sample in SamplePicture.allCases {
         let start = Date()
         let puzzle = sample.makePuzzle()

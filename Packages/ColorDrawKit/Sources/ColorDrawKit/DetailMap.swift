@@ -27,6 +27,11 @@ public struct DetailMap: Sendable {
     public let labels: [UInt16]
     /// Bounding box of every region in high-res pixels.
     public let bounds: [PixelBounds]
+    /// How decisively each pixel won its region's vote: the winning Gaussian weight minus the
+    /// strongest other region's, in steps of 1/64 (255 = nowhere near a border). The border runs
+    /// where this falls to zero and it changes smoothly, so outlines drawn from it are
+    /// anti-aliased instead of following the pixel staircase.
+    public let margins: [UInt8]
 
     /// A scale that makes the longest side about `targetLongSide` pixels.
     public static func recommendedScale(for puzzle: Puzzle, targetLongSide: Int = 1600) -> Int {
@@ -78,6 +83,7 @@ public struct DetailMap: Sendable {
         }
 
         var labels = [UInt16](repeating: 0, count: w * h)
+        var margins = [UInt8](repeating: 255, count: w * h)
         let taps = 2 * radius + 1
         var candidateIDs = [UInt16](repeating: 0, count: taps * taps)
         var candidateWeights = [Float](repeating: 0, count: taps * taps)
@@ -115,14 +121,19 @@ public struct DetailMap: Sendable {
                 let own = source[cell]
                 var best = own
                 var bestWeight: Float = -1
+                var runnerUpWeight: Float = 0
                 for slot in 0..<count {
                     let weight = candidateWeights[slot]
                     if weight > bestWeight || (weight == bestWeight && candidateIDs[slot] == own) {
+                        runnerUpWeight = max(runnerUpWeight, bestWeight)
                         best = candidateIDs[slot]
                         bestWeight = weight
+                    } else {
+                        runnerUpWeight = max(runnerUpWeight, weight)
                     }
                 }
                 labels[y * w + x] = best
+                margins[y * w + x] = UInt8(min(255, ((bestWeight - runnerUpWeight) * 64).rounded()))
             }
         }
 
@@ -140,6 +151,7 @@ public struct DetailMap: Sendable {
                     for y in (sy * scale)..<((sy + 1) * scale) {
                         for x in (sx * scale)..<((sx + 1) * scale) {
                             labels[y * w + x] = UInt16(id)
+                            margins[y * w + x] = 255
                         }
                     }
                 }
@@ -157,6 +169,7 @@ public struct DetailMap: Sendable {
             }
         }
         self.labels = labels
+        self.margins = margins
         self.bounds = bounds
     }
 

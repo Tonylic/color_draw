@@ -137,41 +137,57 @@ public final class PaintBuffer {
 }
 
 public enum OutlineRenderer {
-    /// A transparent image with lines along every region border. Lines are two high-res pixels
-    /// wide with a faint one-pixel halo, so they look smooth both zoomed out and zoomed in.
+    /// How far from the true border the line reaches, in high-res pixels (it fades out over the
+    /// last pixel).
+    static let halfWidth: Float = 1.6
+
+    /// A transparent image with smooth, anti-aliased lines along every region border.
+    ///
+    /// The line follows the zero crossing of `DetailMap.margins` (which changes smoothly) rather
+    /// than the pixel staircase of the region map, so it stays smooth when the picture is zoomed
+    /// in. Where the margins don't describe a border (regions restored without smoothing), the
+    /// border pixels are simply drawn solid.
     public static func makeImage(_ detail: DetailMap, color: RGBColor) -> CGImage? {
         let w = detail.width, h = detail.height
-        var strength = [UInt8](repeating: 0, count: w * h)
+        var pixels = [UInt32](repeating: 0, count: w * h)
         detail.labels.withUnsafeBufferPointer { labels in
-            for y in 0..<h {
-                for x in 0..<w {
-                    let p = y * w + x
-                    if x + 1 < w, labels[p] != labels[p + 1] {
-                        strength[p] = 255
-                        strength[p + 1] = 255
-                    }
-                    if y + 1 < h, labels[p] != labels[p + w] {
-                        strength[p] = 255
-                        strength[p + w] = 255
+            detail.margins.withUnsafeBufferPointer { margins in
+                for y in 0..<h {
+                    for x in 0..<w {
+                        let p = y * w + x
+                        let id = labels[p]
+                        let isBorder = (x > 0 && labels[p - 1] != id) || (x + 1 < w && labels[p + 1] != id)
+                            || (y > 0 && labels[p - w] != id) || (y + 1 < h && labels[p + w] != id)
+                        let margin = margins[p]
+                        guard margin < 255 || isBorder else { continue }
+
+                        var coverage: Float = 0
+                        if margin < 255 {
+                            // Distance to the border ≈ margin ÷ how fast the margin changes here.
+                            var slope: Float = 0
+                            let m = Float(margin)
+                            func compare(_ q: Int) {
+                                let n = margins[q]
+                                if n < 255 { slope = max(slope, abs(Float(n) - m)) }
+                            }
+                            if x > 0 { compare(p - 1) }
+                            if x + 1 < w { compare(p + 1) }
+                            if y > 0 { compare(p - w) }
+                            if y + 1 < h { compare(p + w) }
+                            if slope > 0 {
+                                coverage = min(1, max(0, halfWidth + 0.5 - m / slope))
+                            }
+                        }
+                        if isBorder && coverage == 0 { coverage = 1 }
+                        guard coverage > 0 else { continue }
+
+                        let a = UInt32((coverage * 255).rounded())
+                        // Premultiplied RGBA.
+                        let r = UInt32(color.r) * a / 255, g = UInt32(color.g) * a / 255, b = UInt32(color.b) * a / 255
+                        pixels[p] = r | g << 8 | b << 16 | a << 24
                     }
                 }
             }
-        }
-        var halo = strength
-        for y in 0..<h {
-            for x in 0..<w where strength[y * w + x] == 0 {
-                let p = y * w + x
-                let touches = (x > 0 && strength[p - 1] == 255) || (x + 1 < w && strength[p + 1] == 255)
-                    || (y > 0 && strength[p - w] == 255) || (y + 1 < h && strength[p + w] == 255)
-                if touches { halo[p] = 80 }
-            }
-        }
-        var pixels = [UInt32](repeating: 0, count: w * h)
-        for p in 0..<(w * h) where halo[p] > 0 {
-            let a = UInt32(halo[p])
-            // Premultiplied RGBA.
-            let r = UInt32(color.r) * a / 255, g = UInt32(color.g) * a / 255, b = UInt32(color.b) * a / 255
-            pixels[p] = r | g << 8 | b << 16 | a << 24
         }
         return CGImage.make(pixels: pixels, width: w, height: h, alpha: .premultipliedLast)
     }

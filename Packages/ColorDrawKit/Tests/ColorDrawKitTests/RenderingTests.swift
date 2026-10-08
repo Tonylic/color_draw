@@ -69,6 +69,26 @@ struct RenderingTests {
         #expect(detail.region(atX: detail.width, y: 0) == nil)
     }
 
+    @Test func marginsAreSmallAtBordersAndMaxedInside() {
+        let puzzle = SamplePicture.kitty.makePuzzle()
+        let detail = DetailMap(puzzle: puzzle, scale: 6)
+        var borderPixels = 0, closeToZero = 0
+        for y in 0..<detail.height {
+            for x in 0..<(detail.width - 1) {
+                let p = y * detail.width + x
+                if detail.labels[p] != detail.labels[p + 1] {
+                    borderPixels += 1
+                    if detail.margins[p] < 64 { closeToZero += 1 }
+                }
+            }
+        }
+        #expect(borderPixels > 0)
+        // Almost every border pixel is near the zero crossing the smooth outline is drawn along.
+        #expect(Double(closeToZero) / Double(borderPixels) > 0.9)
+        // Deep inside the big background region nothing is close to a border.
+        #expect(detail.margins[0] == 255)
+    }
+
     @Test func detailMapOfPhotoKeepsEveryRegion() {
         let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .hard)
         let detail = DetailMap(puzzle: puzzle, scale: DetailMap.recommendedScale(for: puzzle))
