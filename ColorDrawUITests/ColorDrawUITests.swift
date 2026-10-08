@@ -111,7 +111,16 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         sleep(1)
         snapshot("10-create-tricky")
+
+        // Photos become mosaics of squares or of triangles.
+        app.buttons["Triangles"].tap()
+        let triangles = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value CONTAINS 'triangles'")).firstMatch
+        XCTAssertTrue(triangles.waitForExistence(timeout: 30), "A triangle mosaic should appear")
+        snapshot("10b-create-triangles")
+        app.buttons["Squares"].tap()
         app.buttons["Easy, up to 50 colors"].tap()
+        let easySquares = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value BEGINSWITH 'Easy' AND value CONTAINS 'squares'")).firstMatch
+        XCTAssertTrue(easySquares.waitForExistence(timeout: 30))
 
         paint.tap()
         XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 15))
@@ -211,6 +220,30 @@ final class ColorDrawUITests: XCTestCase {
         marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         snapshot("14-big-puzzle-painted")
         XCTAssertTrue(app.buttons["Home"].exists)
+    }
+
+    func testSwipingAcrossAPhotoMosaicPaintsRunsOfTiles() throws {
+        try pickSamplePhoto()
+        let squares = app.buttons["Squares"]
+        XCTAssertTrue(squares.waitForExistence(timeout: 10))
+        squares.tap()
+        app.buttons["Easy, up to 50 colors"].tap()
+        let preview = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value BEGINSWITH 'Easy' AND value CONTAINS 'squares'")).firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 30))
+        app.buttons["Let's Paint!"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 30))
+        XCTAssertEqual(progressValue, "0 percent painted")
+        // The paint in hand is the color with the most tiles. Quick sweeps across the picture
+        // paint every tile of it they cross.
+        for row in stride(from: 0.1, through: 0.9, by: 0.1) {
+            canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: row))
+                .press(forDuration: 0.01, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: row)),
+                       withVelocity: XCUIGestureVelocity(2500), thenHoldForDuration: 0)
+        }
+        let painted = Int(progressValue.split(separator: " ").first ?? "") ?? 0
+        XCTAssertGreaterThanOrEqual(painted, 5, "Swipes should paint whole runs of tiles")
+        snapshot("17-mosaic-swipes")
     }
 
     func testQuickSwipesPaintEveryShapeTheyCross() {

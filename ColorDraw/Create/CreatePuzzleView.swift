@@ -2,7 +2,7 @@ import ColorDrawKit
 import SwiftUI
 
 /// How hard a photo puzzle is: at most how many colors (50 for about five-year-olds, up to 200 for
-/// about eight-year-olds) and how much detail. Photos with fewer distinct colors get fewer.
+/// about eight-year-olds) and how many tiles. Photos with fewer distinct colors get fewer.
 enum Difficulty: String, CaseIterable, Identifiable {
     case easy, medium, hard
 
@@ -41,6 +41,15 @@ enum Difficulty: String, CaseIterable, Identifiable {
     }
 }
 
+extension Tiling.Shape {
+    var title: String {
+        switch self {
+        case .squares: "Squares"
+        case .triangles: "Triangles"
+        }
+    }
+}
+
 /// A photo the child picked, already upright and shrunk.
 struct PickedPhoto: Identifiable {
     let id = UUID()
@@ -55,9 +64,10 @@ struct CreatePuzzleView: View {
     @Environment(ArtworkStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lastDifficulty") private var difficulty: Difficulty = .easy
-    @State private var previews: [Difficulty: Preview] = [:]
-    /// Generation that is running or done, per level, so switching back and forth never repeats work.
-    @State private var generators: [Difficulty: Task<Preview?, Never>] = [:]
+    @AppStorage("lastTileShape") private var shape: Tiling.Shape = .squares
+    @State private var previews: [Choice: Preview] = [:]
+    /// Generation that is running or done, per choice, so switching back and forth never repeats work.
+    @State private var generators: [Choice: Task<Preview?, Never>] = [:]
     @State private var isCreating = false
     @State private var showError = false
     @State private var showSaveError = false
@@ -67,59 +77,22 @@ struct CreatePuzzleView: View {
         let image: UIImage
     }
 
+    private struct Choice: Hashable {
+        let difficulty: Difficulty
+        let shape: Tiling.Shape
+    }
+
+    private var choice: Choice { Choice(difficulty: difficulty, shape: shape) }
+
     var body: some View {
-        ZStack {
-            Theme.background.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 20) {
-                    HStack {
-                        Text("How tricky?")
-                            .font(Theme.font(.largeTitle, weight: .black))
-                            .foregroundStyle(Theme.ink)
-                        Spacer()
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                        }
-                        .buttonStyle(RoundIconButtonStyle(size: 46))
-                        .disabled(isCreating)
-                        .accessibilityLabel("Close")
-                    }
-
-                    previewCard
-
-                    HStack(spacing: 12) {
-                        ForEach(Difficulty.allCases) { level in
-                            DifficultyCard(difficulty: level, isSelected: level == difficulty) {
-                                difficulty = level
-                                Haptics.select()
-                            }
-                        }
-                    }
-
-                    Button {
-                        create()
-                    } label: {
-                        HStack {
-                            if isCreating { ProgressView().tint(.white) }
-                            Text("Let's Paint!")
-                            Image(systemName: "paintbrush.pointed.fill")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(ChunkyButtonStyle(color: Theme.pink))
-                    .disabled(!canStart || isCreating)
-                    .opacity(canStart ? 1 : 0.6)
-                }
-                .padding(22)
-                .frame(maxWidth: 620)
-                .frame(maxWidth: .infinity)
-            }
+        GeometryReader { proxy in
+            content(previewHeight: min(560, max(180, proxy.size.height - 470)))
         }
+        .background(Theme.background.ignoresSafeArea())
+        .modifier(RoomySheet())
         // Don't let the sheet be swiped away halfway through saving the new painting.
         .interactiveDismissDisabled(isCreating)
-        .task(id: difficulty) { await makePreview(for: difficulty) }
+        .task(id: choice) { await makePreview(for: choice) }
         .alert("Oops!", isPresented: $showError) {
             Button("OK", role: .cancel) { dismiss() }
         } message: {
@@ -132,21 +105,81 @@ struct CreatePuzzleView: View {
         }
     }
 
-    /// A picture with only one shape isn't a puzzle.
-    private var canStart: Bool {
-        (previews[difficulty]?.puzzle.regions.count ?? 0) > 1
+    /// The preview takes whatever height is left, so "Let's Paint!" stays on screen without scrolling.
+    private func content(previewHeight: CGFloat) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                HStack {
+                    Text("How tricky?")
+                        .font(Theme.font(.largeTitle, weight: .black))
+                        .foregroundStyle(Theme.ink)
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(RoundIconButtonStyle(size: 46))
+                    .disabled(isCreating)
+                    .accessibilityLabel("Close")
+                }
+
+                previewCard(maxHeight: previewHeight)
+
+                HStack(spacing: 12) {
+                    ForEach(Tiling.Shape.allCases, id: \.self) { option in
+                        ShapeChoiceButton(shape: option, isSelected: option == shape) {
+                            shape = option
+                            Haptics.select()
+                        }
+                    }
+                }
+                .padding(.top, 8)
+
+                HStack(spacing: 12) {
+                    ForEach(Difficulty.allCases) { level in
+                        DifficultyCard(difficulty: level, isSelected: level == difficulty) {
+                            difficulty = level
+                            Haptics.select()
+                        }
+                    }
+                }
+
+                Button {
+                    create()
+                } label: {
+                    HStack {
+                        if isCreating { ProgressView().tint(.white) }
+                        Text("Let's Paint!")
+                        Image(systemName: "paintbrush.pointed.fill")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(ChunkyButtonStyle(color: Theme.pink))
+                .disabled(!canStart || isCreating)
+                .opacity(canStart ? 1 : 0.6)
+            }
+            .padding(22)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity)
+        }
     }
 
-    private var previewCard: some View {
+    /// A picture with only one color isn't a puzzle.
+    private var canStart: Bool {
+        (previews[choice]?.puzzle.palette.count ?? 0) > 1
+    }
+
+    private func previewCard(maxHeight: CGFloat) -> some View {
         ZStack {
-            if let preview = previews[difficulty] {
+            if let preview = previews[choice] {
                 Image(uiImage: preview.image)
                     .resizable()
                     .scaledToFit()
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .id(difficulty)
+                    .id(choice)
                     .accessibilityLabel("Preview of the coloring page")
-                    .accessibilityValue("\(difficulty.title), \(preview.puzzle.palette.count) colors")
+                    .accessibilityValue("\(difficulty.title), \(preview.puzzle.palette.count) colors, \(preview.puzzle.regions.count) \(shape.title.lowercased())")
             } else {
                 Image(decorative: photo.image, scale: 1)
                     .resizable()
@@ -156,7 +189,7 @@ struct CreatePuzzleView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .frame(maxHeight: 420)
+        .frame(maxHeight: maxHeight)
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 32, style: .continuous).fill(.white).shadow(color: Theme.ink.opacity(0.12), radius: 12, y: 6))
         .overlay(alignment: .topLeading) {
@@ -171,9 +204,9 @@ struct CreatePuzzleView: View {
                 .offset(x: -18, y: -18)
         }
         .overlay(alignment: .bottom) {
-            if let preview = previews[difficulty] {
-                Text(preview.puzzle.regions.count > 1
-                     ? "\(preview.puzzle.palette.count) colors · \(preview.puzzle.regions.count) shapes"
+            if let preview = previews[choice] {
+                Text(preview.puzzle.palette.count > 1
+                     ? "\(preview.puzzle.palette.count) colors · \(preview.puzzle.regions.count) \(shape.title.lowercased())"
                      : "Not much to color here. Try another picture!")
                     .font(Theme.font(.headline))
                     .foregroundStyle(Theme.ink)
@@ -183,32 +216,32 @@ struct CreatePuzzleView: View {
                     .offset(y: 14)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: previews[difficulty] == nil)
+        .animation(.easeInOut(duration: 0.25), value: previews[choice] == nil)
     }
 
-    private func makePreview(for level: Difficulty) async {
-        guard previews[level] == nil else { return }
-        let generator = generators[level] ?? {
+    private func makePreview(for choice: Choice) async {
+        guard previews[choice] == nil else { return }
+        let generator = generators[choice] ?? {
             let image = photo.image
-            let settings = level.settings
+            let settings = choice.difficulty.settings.with(shape: choice.shape)
             let task = Task.detached(priority: .userInitiated) { () -> Preview? in
                 guard let puzzle = try? PuzzleGenerator.generate(from: image, settings: settings),
                       let snapshot = PuzzleSnapshot.thumbnail(of: puzzle, painted: true, width: 900) else { return nil }
                 return Preview(puzzle: puzzle, image: UIImage(cgImage: snapshot))
             }
-            generators[level] = task
+            generators[choice] = task
             return task
         }()
         let result = await generator.value
         if let result {
-            withAnimation { previews[level] = result }
-        } else if level == difficulty {
+            withAnimation { previews[choice] = result }
+        } else if choice == self.choice {
             showError = true
         }
     }
 
     private func create() {
-        guard let preview = previews[difficulty], !isCreating else { return }
+        guard let preview = previews[choice], !isCreating else { return }
         isCreating = true
         let puzzle = preview.puzzle
         Task {
@@ -268,5 +301,87 @@ private struct DifficultyCard: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.colorCount) colors")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// "Squares" or "Triangles", with a tiny rainbow mosaic of that shape.
+private struct ShapeChoiceButton: View {
+    let shape: Tiling.Shape
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                MosaicIcon(shape: shape)
+                    .frame(width: 40, height: 28)
+                Text(shape.title)
+                    .font(Theme.font(.headline))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(isSelected ? .white : Theme.ink)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(isSelected ? AnyShapeStyle(Theme.orange.gradient) : AnyShapeStyle(Color.white)))
+            .background(Capsule().fill(isSelected ? Theme.orange.darker() : Color.black.opacity(0.08)).offset(y: 4))
+            .scaleEffect(isSelected ? 1.04 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(shape.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Two rows of little tiles in rainbow colors, outlined in white so they read on any background.
+private struct MosaicIcon: View {
+    let shape: Tiling.Shape
+
+    var body: some View {
+        Canvas { context, size in
+            let colors = Theme.rainbow
+            switch shape {
+            case .squares:
+                let side = min(size.width / 3, size.height / 2)
+                for row in 0..<2 {
+                    for column in 0..<3 {
+                        let rect = CGRect(x: CGFloat(column) * side, y: CGFloat(row) * side, width: side, height: side)
+                        let path = Path(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: 2)
+                        context.fill(path, with: .color(colors[(row * 3 + column) % colors.count]))
+                    }
+                }
+            case .triangles:
+                let height = size.height / 2
+                let half = height / 3.squareRoot()
+                for row in 0..<2 {
+                    for column in 0..<4 {
+                        let center = CGFloat(column) * half + half
+                        let top = CGFloat(row) * height
+                        let up = (row + column).isMultiple(of: 2)
+                        var path = Path()
+                        path.move(to: CGPoint(x: center, y: up ? top : top + height))
+                        path.addLine(to: CGPoint(x: center + half, y: up ? top + height : top))
+                        path.addLine(to: CGPoint(x: center - half, y: up ? top + height : top))
+                        path.closeSubpath()
+                        context.fill(path, with: .color(colors[(row * 4 + column + 1) % colors.count]))
+                        context.stroke(path, with: .color(.white), lineWidth: 1)
+                    }
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// On iPad, a page-sized sheet leaves room for a big preview.
+private struct RoomySheet: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.presentationSizing(.page)
+        } else {
+            content
+        }
     }
 }

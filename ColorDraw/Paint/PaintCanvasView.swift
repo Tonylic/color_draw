@@ -24,8 +24,9 @@ enum PaintTouch {
 ///
 /// Layers inside the zoomed content view, bottom to top:
 /// 1. Paint tiles: the painted / blank / striped regions (a bitmap from `PaintBuffer`), split into
-///    tiles so painting a shape re-uploads only the few tiles it touches.
-/// 2. `outlineLayer`: smooth region borders (a bitmap made once).
+///    tiles so painting a shape re-uploads only the few tiles it touches. Mosaics carry their
+///    grid lines in this bitmap.
+/// 2. `outlineLayer`: smooth region borders (a bitmap made once; not used by mosaics).
 /// 3. `numbersLayer`: numbers as vector text, redrawn sharply for every zoom level.
 /// Sparkles and pulses live in `effectsView` above the scroll view, so they keep their size.
 final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate, PaintCanvasControlling {
@@ -42,6 +43,8 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private let effectsView = UIView()
     private let buffer: PaintBuffer
     private var outlineImage: CGImage?
+    /// Square mosaics are drawn pixel-sharp once zoomed in far enough (see `updatePaintFilter`).
+    private var usesSharpPixels = false
     private var needsPaintUpload = false
     private var laidOutSize: CGSize = .zero
     private var lastStrokePoint: CGPoint?
@@ -115,8 +118,12 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         contentView.accessibilityLabel = "Coloring picture"
         contentView.accessibilityHint = "Tap shapes with the matching number to paint them. Use the light bulb button to find one."
 
-        outlineImage = OutlineRenderer.makeImage(session.detail, color: CanvasStyle.standard.outline)
-        outlineLayer.contents = outlineImage
+        if session.detail.tiling == nil {
+            outlineImage = OutlineRenderer.makeImage(session.detail, color: CanvasStyle.standard.outline)
+            outlineLayer.contents = outlineImage
+        } else {
+            outlineLayer.isHidden = true
+        }
         renderAllRegions()
     }
 
@@ -167,6 +174,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         centerContent()
         refreshVisibleColors()
         updateOutlineStrength()
+        updatePaintFilter()
     }
 
     /// Enough zoom that even the smallest number becomes big enough to read comfortably.
@@ -190,12 +198,28 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         centerContent()
         scheduleVisibleColorsRefresh()
         updateOutlineStrength()
+        updatePaintFilter()
+    }
+
+    /// Smoothing a magnified bitmap softens the edges of square tiles, so once each bitmap pixel
+    /// covers 3 or more screen pixels, square mosaics switch to sharp pixels (blocky like pixel
+    /// art, but crisp). Below that, sharp pixels would come out unevenly sized, and triangles'
+    /// slanted sides always need smoothing.
+    private func updatePaintFilter() {
+        guard session.detail.tiling?.shape == .squares, contentView.bounds.width > 0 else { return }
+        let screenPixelsPerPixel = contentView.bounds.width * scrollView.zoomScale * traitCollection.displayScale / CGFloat(session.detail.width)
+        let sharp = screenPixelsPerPixel >= 3
+        guard sharp != usesSharpPixels else { return }
+        usesSharpPixels = sharp
+        for tile in paintTiles {
+            tile.magnificationFilter = sharp ? .nearest : .linear
+        }
     }
 
     /// Pictures with hundreds of shapes are a dense web of lines when zoomed out, which hides the
     /// picture. Their outlines start soft and become fully crisp as the child zooms in to paint.
     private func updateOutlineStrength() {
-        guard session.usesLargePalette else { return }
+        guard session.usesLargePalette, outlineImage != nil else { return }
         let zoomedIn = min(1, max(0, (scrollView.zoomScale - 1) / 2))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -227,8 +251,13 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             return
         }
         if session.usesLargePalette && !session.progress.filled[region] {
-            // Big puzzles: a tap on an unpainted shape picks up its paint.
-            session.paint(region: region, isTap: true)
+            // Big puzzles: a tap on an unpainted shape picks up its paint — unless it landed
+            // right next to a shape of the paint in hand (tiny mosaic tiles are easy to miss by a
+            // hair). Near the middle of the shape, it's clearly that shape the child wants.
+            let shapeRadius = CGFloat(puzzle.regions[region].labelRadius) * contentView.bounds.width / CGFloat(puzzle.width) * scrollView.zoomScale
+            let reach = min(PaintTouch.tapForgiveness, shapeRadius * 0.5)
+            let nearby = regions(along: point, to: point, screenRadius: reach).first(where: session.canPaint(region:))
+            session.paint(region: nearby ?? region, isTap: true)
             return
         }
         // Forgive slightly-off taps on small shapes: paint the closest matching shape nearby.
@@ -498,18 +527,25 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         let center = CGPoint(x: visible.midX, y: visible.midY)
         let pixelSize = contentView.bounds.width / CGFloat(puzzle.width)
         let zoom = scrollView.zoomScale
-        var nearest: [Int: CGFloat] = [:]
-        for (index, region) in puzzle.regions.enumerated() where !session.progress.filled[index] {
+        // Shapes whose number the child can read right now come first; then (say, a mosaic seen
+        // whole, its numbers still too small) the colors they can see.
+        var readable: [Int: CGFloat] = [:], seen: [Int: CGFloat] = [:]
+        let filled = session.progress.filled
+        for (index, region) in puzzle.regions.enumerated() where !filled[index] {
             let point = labelPoint(of: index)
             guard visible.contains(point) else { continue }
-            // Only shapes whose number the child can actually read right now.
-            guard NumberRenderer.fontSize(for: region, in: puzzle, pixelSize: pixelSize) * zoom >= NumbersLayer.minimumReadableSize else { continue }
             // Close to the middle, with a head start for bigger shapes: those catch the eye first.
             let score = hypot(point.x - center.x, point.y - center.y) - CGFloat(region.labelRadius) * pixelSize
-            if score < nearest[region.colorIndex, default: .infinity] { nearest[region.colorIndex] = score }
+            let isReadable = NumberRenderer.fontSize(for: region, in: puzzle, pixelSize: pixelSize) * zoom >= NumbersLayer.minimumReadableSize
+            if isReadable {
+                if score < readable[region.colorIndex, default: .infinity] { readable[region.colorIndex] = score }
+            } else if score < seen[region.colorIndex, default: .infinity] {
+                seen[region.colorIndex] = score
+            }
         }
-        let closest = nearest.sorted { $0.value < $1.value }.prefix(Self.nearbyColorCount).map(\.key)
-        session.updateVisibleColors(Array(closest))
+        let closest = readable.sorted { $0.value < $1.value }.map(\.key)
+            + seen.filter { readable[$0.key] == nil }.sorted { $0.value < $1.value }.map(\.key)
+        session.updateVisibleColors(Array(closest.prefix(Self.nearbyColorCount)))
     }
 
     func isAnyUnpaintedRegionVisible(of color: Int) -> Bool {
@@ -553,7 +589,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     func snapshot(width: CGFloat) -> UIImage? {
         // Read the buffer, not the layer: the layer's bitmap is refreshed on the next run loop,
         // so it can still miss the shape that was just painted.
-        guard let paintImage = buffer.makeImage(), let outlineImage else { return nil }
+        guard let paintImage = buffer.makeImage() else { return nil }
         let size = CGSize(width: width, height: (width * CGFloat(puzzle.height) / CGFloat(puzzle.width)).rounded())
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -563,7 +599,10 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             let rect = CGRect(origin: .zero, size: size)
             UIImage(cgImage: paintImage).draw(in: rect)
-            UIImage(cgImage: outlineImage).draw(in: rect, blendMode: .normal, alpha: outlineAlpha)
+            // Mosaics have their grid lines in the paint (and none on painted tiles).
+            if let outlineImage {
+                UIImage(cgImage: outlineImage).draw(in: rect, blendMode: .normal, alpha: outlineAlpha)
+            }
         }
     }
 

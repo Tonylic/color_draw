@@ -3,7 +3,7 @@
 //   swift run -c release puzzle-preview <output-dir> [photo ...]
 //
 // With no photos it renders the built-in sample pictures. For each photo it renders the
-// easy / medium / hard puzzles.
+// easy / medium / hard mosaics in squares and in triangles, plus a contact sheet of them all.
 import ColorDrawKit
 import CoreGraphics
 import CoreText
@@ -55,18 +55,32 @@ func render(_ puzzle: Puzzle, name: String, into directory: URL, seconds: Double
     let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, 12, nil)
     let blank = PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { _ in .blank }, outputWidth: 1400, numberFont: font)
     let firstColor = 0
+    // Like the app mid-way: big palettes show the pale ghost picture, mosaics are painted on the left.
+    let ghost = puzzle.palette.count > 12
     let partial = PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { index in
-        let color = puzzle.regions[index].colorIndex
+        let region = puzzle.regions[index]
+        let color = region.colorIndex
+        let painted = puzzle.tiling != nil ? region.labelX < Float(puzzle.width) * 0.4 : index % 3 == 0
+        if painted { return .painted(puzzle.palette[color]) }
         if color == firstColor { return .highlighted }
-        return index % 3 == 0 ? .painted(puzzle.palette[color]) : .blank
+        return ghost ? .ghost(puzzle.palette[color]) : .blank
     }, outputWidth: 1400, numberFont: font)
     let done = PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) }, outputWidth: 1400)
     if let blank { writePNG(blank, to: directory.appendingPathComponent("\(name)-blank.png")) }
     if let partial { writePNG(partial, to: directory.appendingPathComponent("\(name)-partial.png")) }
     if let done { writePNG(done, to: directory.appendingPathComponent("\(name)-done.png")) }
-    let tiny = puzzle.regions.filter { $0.labelRadius < 2 }.count
-    print(String(format: "%@: %dx%d, %d colors, %d regions (%d with radius < 2), %.2fs", name, puzzle.width, puzzle.height, puzzle.palette.count, puzzle.regions.count, tiny, seconds))
-    return (blank, done)
+    if let tiling = puzzle.tiling {
+        // How well tiles of one color stick together: the more, the more a swipe paints at once.
+        let colors = puzzle.regions.map(\.colorIndex)
+        let alone = colors.indices.filter { tile in !tiling.neighbors(of: tile).contains { colors[$0] == colors[tile] } }.count
+        let counts = puzzle.regionsByColor.map(\.count)
+        let rare = counts.filter { $0 <= 2 }.count
+        print(String(format: "%@: %d×%d %@, %d colors (%d with ≤2 tiles), %d tiles, %.1f%% alone, %.2fs", name, tiling.columns, tiling.rows, tiling.shape.rawValue, puzzle.palette.count, rare, puzzle.regions.count, Double(alone) * 100 / Double(colors.count), seconds))
+    } else {
+        let tiny = puzzle.regions.filter { $0.labelRadius < 2 }.count
+        print(String(format: "%@: %dx%d, %d colors, %d regions (%d with radius < 2), %.2fs", name, puzzle.width, puzzle.height, puzzle.palette.count, puzzle.regions.count, tiny, seconds))
+    }
+    return (partial, done)
 }
 
 /// A magnified crop of a sample's outlines over its paint, the way Core Animation shows them when
@@ -110,20 +124,29 @@ if photos.isEmpty {
             continue
         }
         let base = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent.replacingOccurrences(of: " ", with: "_")
-        var blanks: [CGImage?] = [image]
-        var dones: [CGImage?] = [nil]
-        for (level, settings) in [("easy", PuzzleSettings.easy), ("medium", .medium), ("hard", .hard)] {
-            let start = Date()
-            do {
-                let puzzle = try PuzzleGenerator.generate(from: image, settings: settings)
-                let result = render(puzzle, name: "\(base)-\(level)", into: output, seconds: Date().timeIntervalSince(start))
-                blanks.append(result.blank)
-                dones.append(result.done)
-            } catch {
-                print("Failed \(path): \(error)")
+        var rows: [[CGImage?]] = []
+        for shape in Tiling.Shape.allCases {
+            var partials: [CGImage?] = [shape == .squares ? image : nil]
+            var dones: [CGImage?] = [nil]
+            for (level, settings) in [("easy", PuzzleSettings.easy), ("medium", .medium), ("hard", .hard)] {
+                var settings = settings.with(shape: shape)
+                // TILES=40,64,96 tries other grid sizes.
+                if let sizes = ProcessInfo.processInfo.environment["TILES"]?.split(separator: ",").compactMap({ Int($0) }), sizes.count == 3 {
+                    settings.tiles?.alongLongSide = sizes[["easy", "medium", "hard"].firstIndex(of: level)!]
+                }
+                let start = Date()
+                do {
+                    let puzzle = try PuzzleGenerator.generate(from: image, settings: settings)
+                    let result = render(puzzle, name: "\(base)-\(shape.rawValue)-\(level)", into: output, seconds: Date().timeIntervalSince(start))
+                    partials.append(result.blank)
+                    dones.append(result.done)
+                } catch {
+                    print("Failed \(path): \(error)")
+                }
             }
+            rows += [partials, dones]
         }
-        if let sheet = contactSheet([blanks, dones], cellWidth: 520) {
+        if let sheet = contactSheet(rows, cellWidth: 520) {
             writePNG(sheet, to: output.appendingPathComponent("\(base)-sheet.png"))
         }
     }

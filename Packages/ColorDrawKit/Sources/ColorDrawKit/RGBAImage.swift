@@ -29,6 +29,13 @@ public struct RGBAImage: Sendable, Equatable {
         let scale = min(1, Double(maxDimension) / Double(max(sourceWidth, sourceHeight)))
         let width = max(1, Int((Double(sourceWidth) * scale).rounded()))
         let height = max(1, Int((Double(sourceHeight) * scale).rounded()))
+        self.init(cgImage: cgImage, width: width, height: height)
+    }
+
+    /// Draws `cgImage` stretched to exactly `width` × `height`, flattening any transparency onto
+    /// white.
+    public init?(cgImage: CGImage, width: Int, height: Int) {
+        guard cgImage.width > 0, cgImage.height > 0 else { return nil }
         guard let image = RGBAImage.render(width: width, height: height, antialias: true, draw: { context in
             // `render` flips to a top-left origin, but `draw(_:in:)` expects Core Graphics'
             // native bottom-left origin, so flip back or the photo comes out upside down.

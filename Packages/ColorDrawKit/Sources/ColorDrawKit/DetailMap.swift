@@ -38,8 +38,11 @@ public struct DetailMap: Sendable {
     /// How decisively each pixel won its region's vote: the winning Gaussian weight minus the
     /// strongest other region's, in steps of 1/64 (255 = nowhere near a border). The border runs
     /// where this falls to zero and it changes smoothly, so outlines drawn from it are
-    /// anti-aliased instead of following the pixel staircase.
+    /// anti-aliased instead of following the pixel staircase. For mosaics: the distance to the
+    /// nearest edge shared with another tile, in steps of 1/32 pixel.
     public let margins: [UInt8]
+    /// Set for mosaic puzzles.
+    public let tiling: Tiling?
 
     /// A scale that makes the longest side about `targetLongSide` pixels.
     public static func recommendedScale(for puzzle: Puzzle, targetLongSide: Int = 2000) -> Int {
@@ -57,6 +60,11 @@ public struct DetailMap: Sendable {
         self.scale = scale
         width = w
         height = h
+        tiling = puzzle.tiling
+        if let tiling = puzzle.tiling {
+            (labels, margins, bounds) = Self.drawTiles(tiling, width: w, height: h, regionCount: puzzle.regions.count)
+            return
+        }
 
         // For each sub-pixel phase: Gaussian weights of the five nearest working pixels
         // (offsets -2...2 from the pixel's own cell) along one axis.
@@ -179,6 +187,34 @@ public struct DetailMap: Sendable {
         self.labels = labels
         self.margins = margins
         self.bounds = bounds
+    }
+
+    /// Mosaic tiles, straight from their geometry, with each pixel's distance to the nearest
+    /// shared edge as its margin.
+    private static func drawTiles(_ tiling: Tiling, width: Int, height: Int, regionCount: Int) -> ([UInt16], [UInt8], [PixelBounds]) {
+        let layout = TileLayout(tiling, width: Double(width), height: Double(height))
+        var labels = [UInt16](repeating: 0, count: width * height)
+        var margins = [UInt8](repeating: 255, count: width * height)
+        var bounds = [PixelBounds](repeating: .empty, count: regionCount)
+        labels.withUnsafeMutableBufferPointer { labels in
+            margins.withUnsafeMutableBufferPointer { margins in
+                for y in 0..<height {
+                    let py = Double(y) + 0.5
+                    for x in 0..<width {
+                        let px = Double(x) + 0.5
+                        let tile = layout.tile(atX: px, y: py)
+                        let p = y * width + x
+                        labels[p] = UInt16(tile)
+                        margins[p] = UInt8(min(255, (layout.distanceToSharedEdge(x: px, y: py, tile: tile) * 32).rounded()))
+                        if x < bounds[tile].minX { bounds[tile].minX = x }
+                        if x > bounds[tile].maxX { bounds[tile].maxX = x }
+                        if y < bounds[tile].minY { bounds[tile].minY = y }
+                        if y > bounds[tile].maxY { bounds[tile].maxY = y }
+                    }
+                }
+            }
+        }
+        return (labels, margins, bounds)
     }
 
     /// Every region within `radius` of the segment from `start` to `end` (all in high-res pixels),

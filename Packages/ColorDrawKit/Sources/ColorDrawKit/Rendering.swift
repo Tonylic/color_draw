@@ -55,19 +55,60 @@ public enum RegionAppearance: Hashable, Sendable {
 
 /// The high-res bitmap of painted / blank / highlighted regions shown under the outlines.
 /// Updating a region rewrites only the pixels inside its bounding box.
+///
+/// Mosaics carry their grid lines in this bitmap rather than in a separate outline image: lines
+/// are drawn only on tiles that aren't painted yet, so a finished mosaic is crisp, seamless color.
 public final class PaintBuffer {
     public let detail: DetailMap
     public let style: CanvasStyle
     private var pixels: [UInt32]
     private let stripePeriod: Int
     private var stripes: (light: UInt32, dark: UInt32)
+    /// Mosaics: how strongly each pixel is covered by a grid line (0–255).
+    private let gridLines: [UInt8]?
 
-    public init(detail: DetailMap, style: CanvasStyle = .standard) {
+    /// How dark grid lines are, as a fraction of the outline color: lighter for small tiles, whose
+    /// dense grid would otherwise veil the picture when it's seen whole.
+    static func gridLineStrength(tileSize: Float) -> Float {
+        min(0.5, max(0.35, 0.2 + tileSize * 0.0075))
+    }
+
+    /// - Parameter gridLineOpacity: Scales mosaic grid lines (`0` hides them), e.g. for small
+    ///   thumbnails where full-strength lines would cover the picture.
+    public init(detail: DetailMap, style: CanvasStyle = .standard, gridLineOpacity: Float = 1) {
         self.detail = detail
         self.style = style
         pixels = [UInt32](repeating: style.blank.pixel, count: detail.width * detail.height)
         stripePeriod = max(10, detail.scale * 3)
         stripes = (style.highlightLight.pixel, style.highlightDark.pixel)
+        if detail.tiling != nil, gridLineOpacity > 0 {
+            gridLines = Self.gridLineCoverage(detail, opacity: gridLineOpacity)
+        } else {
+            gridLines = nil
+        }
+    }
+
+    /// Anti-aliased lines along the tiles' shared edges, about 3.5% of a tile wide (at least
+    /// 1.4 pixels).
+    private static func gridLineCoverage(_ detail: DetailMap, opacity: Float) -> [UInt8] {
+        let tileSize = Float(PuzzleGenerator.tilePixels) * Float(detail.scale)
+        let halfWidth = max(0.7, tileSize * 0.0175)
+        let strength = gridLineStrength(tileSize: tileSize) * min(1, opacity) * 255
+        return detail.margins.map { margin in
+            guard margin < 255 else { return 0 }
+            let coverage = min(1, max(0, halfWidth + 0.5 - Float(margin) / 32))
+            return UInt8((coverage * strength).rounded())
+        }
+    }
+
+    /// `base` with `line` laid over it at `alpha` (0–255).
+    @inline(__always)
+    private static func blend(_ base: UInt32, _ line: UInt32, alpha: UInt8) -> UInt32 {
+        let a = UInt32(alpha), keep = 255 - a
+        let r = ((base & 0xFF) * keep + (line & 0xFF) * a) / 255
+        let g = ((base >> 8 & 0xFF) * keep + (line >> 8 & 0xFF) * a) / 255
+        let b = ((base >> 16 & 0xFF) * keep + (line >> 16 & 0xFF) * a) / 255
+        return r | g << 8 | b << 16 | 0xFF00_0000
     }
 
     /// Tints the stripes of highlighted regions with the selected paint (`nil`: neutral stripes).
@@ -106,13 +147,24 @@ public final class PaintBuffer {
             case let .painted(color): return color.pixel
             }
         }
+        // Grid lines go on tiles that aren't painted yet.
+        let lined: [Bool] = lookup.map {
+            if case .painted = $0 { return false }
+            return true
+        }
+        let lineColor = style.outline.pixel
         detail.labels.withUnsafeBufferPointer { labels in
             pixels.withUnsafeMutableBufferPointer { out in
                 for y in 0..<detail.height {
                     let row = y * width
                     for x in 0..<width {
-                        let color = colors[Int(labels[row + x])]
-                        out[row + x] = color != 0 ? color : (((x + y) / (period / 2)) & 1 == 0 ? light : dark)
+                        let id = Int(labels[row + x])
+                        let color = colors[id]
+                        var pixel = color != 0 ? color : (((x + y) / (period / 2)) & 1 == 0 ? light : dark)
+                        if let gridLines, lined[id], gridLines[row + x] > 0 {
+                            pixel = Self.blend(pixel, lineColor, alpha: gridLines[row + x])
+                        }
+                        out[row + x] = pixel
                     }
                 }
             }
@@ -133,12 +185,18 @@ public final class PaintBuffer {
         case .highlighted: nil
         case let .painted(color): color.pixel
         }
+        let gridLines: [UInt8]? = if case .painted = appearance { nil } else { self.gridLines }
+        let lineColor = style.outline.pixel
         detail.labels.withUnsafeBufferPointer { labels in
             pixels.withUnsafeMutableBufferPointer { out in
                 for y in bounds.minY...bounds.maxY {
                     let row = y * width
                     for x in bounds.minX...bounds.maxX where labels[row + x] == id {
-                        out[row + x] = solid ?? (((x + y) / half) & 1 == 0 ? light : dark)
+                        var pixel = solid ?? (((x + y) / half) & 1 == 0 ? light : dark)
+                        if let gridLines, gridLines[row + x] > 0 {
+                            pixel = Self.blend(pixel, lineColor, alpha: gridLines[row + x])
+                        }
+                        out[row + x] = pixel
                     }
                 }
             }
@@ -234,8 +292,9 @@ public enum NumberRenderer {
     /// number inside its region, capped so huge areas don't get giant numbers.
     public static func fontSize(for region: PuzzleRegion, in puzzle: Puzzle, pixelSize: CGFloat) -> CGFloat {
         let diameter = CGFloat(region.labelRadius) * 2 * pixelSize
-        // Longer numbers are wider, so they need to shrink to stay inside the shape.
-        let widthFactor: CGFloat = switch region.colorIndex + 1 {
+        // Longer numbers are wider, so they need to shrink to stay inside the shape. In a mosaic
+        // every number gets the size of the longest one, so the grid looks even.
+        let widthFactor: CGFloat = switch puzzle.tiling != nil ? puzzle.palette.count : region.colorIndex + 1 {
         case ..<10: 0.85
         case ..<100: 0.62
         default: 0.46
@@ -263,7 +322,7 @@ public enum NumberRenderer {
 
 public enum PuzzleSnapshot {
     /// A small picture of a puzzle, either fully painted or not painted at all (just outlines, or
-    /// outlines over the pale ghost picture for `ghost`).
+    /// outlines over the pale ghost picture for `ghost`). Painted mosaics have no grid lines.
     public static func thumbnail(of puzzle: Puzzle, painted: Bool, ghost: Bool = false, outlineOpacity: CGFloat = 1, width: Int) -> CGImage? {
         let scale = max(1, min(4, Int((Double(width * 2) / Double(puzzle.width)).rounded(.up))))
         let detail = DetailMap(puzzle: puzzle, scale: scale)
@@ -291,7 +350,9 @@ public enum PuzzleSnapshot {
         numberFont: CTFont? = nil,
         style: CanvasStyle = .standard
     ) -> CGImage? {
-        let buffer = PaintBuffer(detail: detail, style: style)
+        // Mosaics carry their grid lines in the paint itself.
+        let isMosaic = detail.tiling != nil
+        let buffer = PaintBuffer(detail: detail, style: style, gridLineOpacity: showOutlines ? Float(outlineOpacity) : 0)
         buffer.render(appearance)
         guard let paint = buffer.makeImage() else { return nil }
         let outputHeight = max(1, Int((Double(outputWidth) * Double(puzzle.height) / Double(puzzle.width)).rounded()))
@@ -302,7 +363,7 @@ public enum PuzzleSnapshot {
         let rect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
         context.interpolationQuality = .high
         context.draw(paint, in: rect)
-        if showOutlines, outlineOpacity > 0, let outline = OutlineRenderer.makeImage(detail, color: style.outline) {
+        if showOutlines, !isMosaic, outlineOpacity > 0, let outline = OutlineRenderer.makeImage(detail, color: style.outline) {
             context.saveGState()
             context.setAlpha(outlineOpacity)
             context.draw(outline, in: rect)

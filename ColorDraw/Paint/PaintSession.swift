@@ -84,7 +84,11 @@ final class PaintSession {
         let progress = PaintProgress(puzzle: puzzle, filledRegions: artwork.filledRegions)
         self.progress = progress
         let firstUnfinished = progress.remainingByColor.firstIndex { $0 > 0 } ?? 0
-        if puzzle.palette.count > Self.smallPaletteLimit {
+        if puzzle.tiling != nil {
+            // Mosaics start with the color that has the most tiles: big runs to swipe across.
+            let remaining = progress.remainingByColor
+            selectedColor = remaining.indices.max { remaining[$0] < remaining[$1] } ?? firstUnfinished
+        } else if puzzle.palette.count > Self.smallPaletteLimit {
             // Big puzzles start with the color of the biggest unpainted shape: easy to see and
             // to tap, so the first stroke is a success.
             let biggest = puzzle.regions.indices
@@ -218,12 +222,41 @@ final class PaintSession {
         }
     }
 
-    /// Before the first stroke, shows where to start: the biggest shape of the selected color pulses.
+    /// Before the first stroke, shows where to start: the biggest shape of the selected color
+    /// pulses — in a mosaic, a tile in the middle of the biggest patch of it.
     func showStartHint() {
         guard progress.filledCount == 0 else { return }
-        if let biggest = unpaintedRegions(of: selectedColor).max(by: { puzzle.regions[$0].labelRadius < puzzle.regions[$1].labelRadius }) {
-            canvas?.point(at: biggest)
+        let candidates = unpaintedRegions(of: selectedColor)
+        let start: Int?
+        if let tiling = puzzle.tiling {
+            // Among the fullest patches, the one nearest the middle of the picture.
+            let middle = (x: Float(puzzle.width) / 2, y: Float(puzzle.height) / 2)
+            let scores = candidates.map { tile -> Float in
+                let region = puzzle.regions[tile]
+                let offset = hypot(region.labelX - middle.x, region.labelY - middle.y) / Float(max(puzzle.width, puzzle.height))
+                return Float(patchSize(around: tile, in: tiling)) - offset
+            }
+            start = scores.indices.max { scores[$0] < scores[$1] }.map { candidates[$0] }
+        } else {
+            start = candidates.max { puzzle.regions[$0].labelRadius < puzzle.regions[$1].labelRadius }
         }
+        if let start { canvas?.point(at: start) }
+    }
+
+    /// How many unpainted tiles of a tile's color lie in the block of tiles around it.
+    private func patchSize(around tile: Int, in tiling: Tiling) -> Int {
+        let (row, column) = tiling.position(of: tile)
+        let color = puzzle.regions[tile].colorIndex
+        // Triangles are narrower than they are tall, so look a little further sideways.
+        let across = tiling.shape == .triangles ? 3 : 2
+        var count = 0
+        for r in max(0, row - 2)...min(tiling.rows - 1, row + 2) {
+            for c in max(0, column - across)...min(tiling.columns - 1, column + across) {
+                let neighbor = r * tiling.columns + c
+                if puzzle.regions[neighbor].colorIndex == color && !progress.filled[neighbor] { count += 1 }
+            }
+        }
+        return count
     }
 
     /// The child touched the picture or a control, so they're not stuck.

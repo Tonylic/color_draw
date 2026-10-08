@@ -6,7 +6,7 @@ import Testing
 @Suite("Puzzle storage")
 struct PuzzleCodingTests {
     @Test func roundTripsThroughPropertyList() throws {
-        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .medium)
+        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .medium.organic)
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let data = try encoder.encode(puzzle)

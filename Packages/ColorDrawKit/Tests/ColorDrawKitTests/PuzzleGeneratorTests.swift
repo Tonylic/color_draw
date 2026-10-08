@@ -51,6 +51,15 @@ func makeBusyPhoto(width: Int = 560, height: Int = 420, tile: Int = 20, colorCou
     return RGBAImage(width: width, height: height, pixels: pixels)
 }
 
+extension PuzzleSettings {
+    /// The same level with shapes that follow the photo's outlines instead of tiles.
+    var organic: PuzzleSettings {
+        var copy = self
+        copy.tiles = nil
+        return copy
+    }
+}
+
 /// Checks the invariants every puzzle must satisfy for the app to work.
 func expectValid(_ puzzle: Puzzle, settings: PuzzleSettings? = nil) {
     #expect(puzzle.regionMap.count == puzzle.width * puzzle.height)
@@ -68,9 +77,15 @@ func expectValid(_ puzzle: Puzzle, settings: PuzzleSettings? = nil) {
         #expect(puzzle.region(atX: Int(region.labelX), y: Int(region.labelY)) == index)
         #expect(region.minX <= Int(region.labelX) && Int(region.labelX) <= region.maxX)
         #expect(region.minY <= Int(region.labelY) && Int(region.labelY) <= region.maxY)
-        if let settings, puzzle.regions.count > 1 {
+        if let settings, settings.tiles == nil, puzzle.regions.count > 1 {
             #expect(region.area >= settings.minimumRegionArea)
             #expect(region.labelRadius >= settings.minimumRegionRadius - 0.01)
+        }
+    }
+    if let tiling = puzzle.tiling {
+        #expect(puzzle.regions.count == tiling.tileCount)
+        if let tiles = settings?.tiles {
+            #expect(tiling.shape == tiles.shape)
         }
     }
     // Every palette color is used, so no number is left without regions.
@@ -86,8 +101,8 @@ struct PuzzleGeneratorTests {
             context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
             context.fill(CGRect(x: 20, y: 0, width: 20, height: 20))
         }!
-        let puzzle = PuzzleGenerator.generate(from: image, settings: .easy)
-        expectValid(puzzle, settings: .easy)
+        let puzzle = PuzzleGenerator.generate(from: image, settings: .easy.organic)
+        expectValid(puzzle, settings: .easy.organic)
         #expect(puzzle.regions.count == 2)
         #expect(Set(puzzle.palette) == [RGBColor(r: 255, g: 0, b: 0), RGBColor(r: 0, g: 0, b: 255)])
         // Rainbow order puts red before blue.
@@ -98,20 +113,24 @@ struct PuzzleGeneratorTests {
 
     @Test(arguments: [("easy", PuzzleSettings.easy), ("medium", .medium), ("hard", .hard)])
     func noisyPhotoSatisfiesSettings(level: String, settings: PuzzleSettings) {
-        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: settings)
-        expectValid(puzzle, settings: settings)
-        #expect(puzzle.palette.count >= 2, "\(level) should keep several colors")
+        for settings in [settings, settings.with(shape: .triangles), settings.organic] {
+            let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: settings)
+            expectValid(puzzle, settings: settings)
+            #expect(puzzle.palette.count >= 2, "\(level) should keep several colors")
+        }
     }
 
     @Test(arguments: [("easy", PuzzleSettings.easy, 50), ("medium", .medium, 100), ("hard", .hard, 200)])
     func colorfulPhotosUseUpToTheLevelsColorLimit(level: String, settings: PuzzleSettings, limit: Int) throws {
         #expect(settings.colorCount == limit)
         let photo = try #require(makeBusyPhoto(tile: 14, colorCount: 300).makeCGImage())
-        let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
-        expectValid(puzzle, settings: settings)
-        #expect(puzzle.palette.count <= limit, "\(level) allows at most \(limit) colors")
-        // A very colorful photo uses most of the level's colors.
-        #expect(puzzle.palette.count >= limit * 6 / 10, "\(level) made only \(puzzle.palette.count) colors")
+        for settings in [settings, settings.with(shape: .triangles), settings.organic] {
+            let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
+            expectValid(puzzle, settings: settings)
+            #expect(puzzle.palette.count <= limit, "\(level) allows at most \(limit) colors")
+            // A very colorful photo uses most of the level's colors.
+            #expect(puzzle.palette.count >= limit * 6 / 10, "\(level) made only \(puzzle.palette.count) colors")
+        }
     }
 
     @Test func simplePhotosStayBelowTheLimit() throws {
@@ -123,47 +142,67 @@ struct PuzzleGeneratorTests {
             context.fill(CGRect(x: 0, y: 120, width: 300, height: 80))
         }?.makeCGImage())
         for settings in [PuzzleSettings.easy, .medium, .hard] {
-            let puzzle = try PuzzleGenerator.generate(from: image, settings: settings)
-            #expect(puzzle.palette.count == 2)
-            #expect(puzzle.regions.count == 2)
+            let organic = try PuzzleGenerator.generate(from: image, settings: settings.organic)
+            #expect(organic.palette.count == 2)
+            #expect(organic.regions.count == 2)
+            for shape in Tiling.Shape.allCases {
+                let mosaic = try PuzzleGenerator.generate(from: image, settings: settings.with(shape: shape))
+                #expect(mosaic.palette.count == 2)
+            }
         }
     }
 
     @Test func harderLevelsHaveMoreRegions() throws {
         let photo = try #require(makeNoisyPhoto(width: 400, height: 300).makeCGImage())
-        let easy = try PuzzleGenerator.generate(from: photo, settings: .easy)
-        let hard = try PuzzleGenerator.generate(from: photo, settings: .hard)
+        let easy = try PuzzleGenerator.generate(from: photo, settings: .easy.organic)
+        let hard = try PuzzleGenerator.generate(from: photo, settings: .hard.organic)
         #expect(easy.regions.count < hard.regions.count)
         #expect(max(easy.width, easy.height) <= PuzzleSettings.easy.maxDimension)
         #expect(max(hard.width, hard.height) <= PuzzleSettings.hard.maxDimension)
+        for shape in Tiling.Shape.allCases {
+            let easyMosaic = try PuzzleGenerator.generate(from: photo, settings: PuzzleSettings.easy.with(shape: shape))
+            let mediumMosaic = try PuzzleGenerator.generate(from: photo, settings: PuzzleSettings.medium.with(shape: shape))
+            let hardMosaic = try PuzzleGenerator.generate(from: photo, settings: PuzzleSettings.hard.with(shape: shape))
+            #expect(easyMosaic.regions.count < mediumMosaic.regions.count)
+            #expect(mediumMosaic.regions.count < hardMosaic.regions.count)
+        }
     }
 
     @Test func paletteColorsAreClearlyDifferent() {
-        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: .medium)
-        let labs = puzzle.palette.map(\.lab)
-        for i in labs.indices {
-            for j in labs.indices where j > i {
-                // The storybook boost only spreads colors further apart.
-                #expect(labs[i].distanceSquared(to: labs[j]).squareRoot() >= PuzzleSettings.medium.minimumColorDistance * 0.9)
+        for settings in [PuzzleSettings.medium, .medium.organic] {
+            let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: settings)
+            let labs = puzzle.palette.map(\.lab)
+            for i in labs.indices {
+                for j in labs.indices where j > i {
+                    // The storybook boost only spreads colors further apart.
+                    #expect(labs[i].distanceSquared(to: labs[j]).squareRoot() >= PuzzleSettings.medium.minimumColorDistance * 0.9)
+                }
             }
         }
     }
 
     @Test func generationIsDeterministic() {
         let photo = makeNoisyPhoto()
-        #expect(PuzzleGenerator.generate(from: photo, settings: .medium) == PuzzleGenerator.generate(from: photo, settings: .medium))
+        for settings in [PuzzleSettings.medium, .medium.with(shape: .triangles), .medium.organic] {
+            #expect(PuzzleGenerator.generate(from: photo, settings: settings) == PuzzleGenerator.generate(from: photo, settings: settings))
+        }
     }
 
     @Test func singleColorImageIsOneRegion() {
-        let puzzle = PuzzleGenerator.generate(from: RGBAImage(width: 30, height: 30), settings: .hard)
+        let puzzle = PuzzleGenerator.generate(from: RGBAImage(width: 30, height: 30), settings: .hard.organic)
         expectValid(puzzle)
         #expect(puzzle.regions.count == 1)
         #expect(puzzle.palette == [RGBColor(r: 255, g: 255, b: 255)])
+        let mosaic = PuzzleGenerator.generate(from: RGBAImage(width: 30, height: 30), settings: .hard)
+        expectValid(mosaic)
+        #expect(mosaic.palette == [RGBColor(r: 255, g: 255, b: 255)])
     }
 
     @Test func tinyImagesStillWork() {
-        let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(width: 3, height: 2), settings: .easy)
-        expectValid(puzzle)
+        for settings in [PuzzleSettings.easy, .easy.with(shape: .triangles), .easy.organic] {
+            let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(width: 3, height: 2), settings: settings)
+            expectValid(puzzle)
+        }
     }
 
     @Test func photosAreNotFlipped() throws {
@@ -181,12 +220,14 @@ struct PuzzleGeneratorTests {
 
     @Test func panoramasAreCroppedToAFriendlyShape() throws {
         let panorama = try #require(makeNoisyPhoto(width: 600, height: 60).makeCGImage())
-        let puzzle = try PuzzleGenerator.generate(from: panorama, settings: .easy)
-        expectValid(puzzle, settings: .easy)
-        #expect(Double(puzzle.width) / Double(puzzle.height) <= PuzzleSettings.easy.maximumAspectRatio + 0.05)
         let tower = try #require(makeNoisyPhoto(width: 50, height: 400).makeCGImage())
-        let tall = try PuzzleGenerator.generate(from: tower, settings: .medium)
-        #expect(Double(tall.height) / Double(tall.width) <= 2.05)
+        for settings in [PuzzleSettings.easy, .easy.with(shape: .triangles), .easy.organic] {
+            let puzzle = try PuzzleGenerator.generate(from: panorama, settings: settings)
+            expectValid(puzzle, settings: settings)
+            #expect(Double(puzzle.width) / Double(puzzle.height) <= PuzzleSettings.easy.maximumAspectRatio + 0.05)
+            let tall = try PuzzleGenerator.generate(from: tower, settings: settings)
+            #expect(Double(tall.height) / Double(tall.width) <= 2.05)
+        }
     }
 
     @Test func nearlyIdenticalFlatColorsShareANumber() {
@@ -201,10 +242,12 @@ struct PuzzleGeneratorTests {
                 pixels[i + 2] = 60
             }
         }
-        let puzzle = PuzzleGenerator.generate(from: RGBAImage(width: 40, height: 40, pixels: pixels), settings: .medium)
+        let puzzle = PuzzleGenerator.generate(from: RGBAImage(width: 40, height: 40, pixels: pixels), settings: .medium.organic)
         expectValid(puzzle)
         #expect(puzzle.palette.count == 1)
         #expect(puzzle.regions.count == 1)
+        let mosaic = PuzzleGenerator.generate(from: RGBAImage(width: 40, height: 40, pixels: pixels), settings: .medium)
+        #expect(mosaic.palette.count == 1)
     }
 
     @Test(arguments: SamplePicture.allCases)

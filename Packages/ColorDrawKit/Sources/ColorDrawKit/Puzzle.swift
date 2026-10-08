@@ -38,14 +38,19 @@ public struct Puzzle: Codable, Equatable, Sendable {
     public let regionMap: [UInt16]
     public let regions: [PuzzleRegion]
     public let palette: [RGBColor]
+    /// Set for mosaic puzzles: region `i` is tile `i` of this grid, which spans the whole picture.
+    /// `nil` for puzzles whose shapes follow the picture's own outlines.
+    public let tiling: Tiling?
 
-    public init(width: Int, height: Int, regionMap: [UInt16], regions: [PuzzleRegion], palette: [RGBColor]) {
+    public init(width: Int, height: Int, regionMap: [UInt16], regions: [PuzzleRegion], palette: [RGBColor], tiling: Tiling? = nil) {
         precondition(regionMap.count == width * height, "Region map does not match puzzle size")
+        precondition(tiling.map { $0.tileCount == regions.count } ?? true, "Every tile must be a region")
         self.width = width
         self.height = height
         self.regionMap = regionMap
         self.regions = regions
         self.palette = palette
+        self.tiling = tiling
     }
 
     @inline(__always)
@@ -65,10 +70,11 @@ public struct Puzzle: Codable, Equatable, Sendable {
     // MARK: Codable — the region map is stored as raw little-endian bytes to keep files small.
 
     private enum CodingKeys: String, CodingKey {
-        case version, width, height, regionMap, regions, palette
+        case version, width, height, regionMap, regions, palette, tiling
     }
 
-    public static let formatVersion = 1
+    /// 2 added `tiling`.
+    public static let formatVersion = 2
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -90,6 +96,12 @@ public struct Puzzle: Codable, Equatable, Sendable {
         }
         regions = try container.decode([PuzzleRegion].self, forKey: .regions)
         palette = try container.decode([RGBColor].self, forKey: .palette)
+        tiling = try container.decodeIfPresent(Tiling.self, forKey: .tiling)
+        if let tiling {
+            guard tiling.isValid, tiling.tileCount == regions.count else {
+                throw DecodingError.dataCorruptedError(forKey: .tiling, in: container, debugDescription: "Tiles don't match the regions")
+            }
+        }
         let regionsAreValid = regions.allSatisfy { region in
             palette.indices.contains(region.colorIndex)
                 && region.area > 0
@@ -115,5 +127,6 @@ public struct Puzzle: Codable, Equatable, Sendable {
         try container.encode(data, forKey: .regionMap)
         try container.encode(regions, forKey: .regions)
         try container.encode(palette, forKey: .palette)
+        try container.encodeIfPresent(tiling, forKey: .tiling)
     }
 }
