@@ -256,11 +256,14 @@ final class ColorDrawUITests: XCTestCase {
         // A drag heading toward nothing of the chosen paint moves the picture instead.
         let yellow = pot(named: "yellow")
         tap(yellow)
+        // (Upward, away from the bell: zoomed in there's always room to move vertically, while a
+        // wide iPad screen may already show the whole width.)
         let before = canvas.frame
-        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.2))
-            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.2)))
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4))
+            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.15)))
         sleep(1)
-        XCTAssertLessThan(canvas.frame.minX, before.minX - 20, "Dragging left over the sky moved the picture left")
+        XCTAssertLessThan(canvas.frame.minY, before.minY - 20, "Dragging up over the face moved the picture up")
+        XCTAssertNotEqual(yellow.value as? String, "All done", "…without painting anything")
     }
 
     func testMoveModeLetsOneFingerScroll() {
