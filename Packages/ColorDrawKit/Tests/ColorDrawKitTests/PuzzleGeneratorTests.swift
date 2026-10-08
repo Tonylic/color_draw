@@ -30,11 +30,34 @@ func makeNoisyPhoto(width: Int = 200, height: Int = 150, seed: UInt64 = 7) -> RG
     return RGBAImage(width: width, height: height, pixels: pixels)
 }
 
+/// A very busy "photo": a mosaic of small tiles in many strong colors, far more shapes than any
+/// level allows.
+func makeBusyPhoto(width: Int = 560, height: Int = 420, tile: Int = 20, seed: UInt64 = 3) -> RGBAImage {
+    var rng = SplitMix64(seed: seed)
+    let colors: [RGBColor] = (0..<16).map { _ in
+        RGBColor(r: .random(in: 0...255, using: &rng), g: .random(in: 0...255, using: &rng), b: .random(in: 0...255, using: &rng))
+    }
+    let columns = (width + tile - 1) / tile, rows = (height + tile - 1) / tile
+    let tiles = (0..<(columns * rows)).map { _ in colors.randomElement(using: &rng)! }
+    var pixels = [UInt8](repeating: 255, count: width * height * 4)
+    for y in 0..<height {
+        for x in 0..<width {
+            let color = tiles[(y / tile) * columns + x / tile]
+            let i = (y * width + x) * 4
+            pixels[i] = color.r
+            pixels[i + 1] = color.g
+            pixels[i + 2] = color.b
+        }
+    }
+    return RGBAImage(width: width, height: height, pixels: pixels)
+}
+
 /// Checks the invariants every puzzle must satisfy for the app to work.
 func expectValid(_ puzzle: Puzzle, settings: PuzzleSettings? = nil) {
     #expect(puzzle.regionMap.count == puzzle.width * puzzle.height)
     #expect(!puzzle.regions.isEmpty)
     #expect(puzzle.palette.count <= (settings?.colorCount ?? 255))
+    #expect(puzzle.regions.count <= (settings?.maximumRegionCount ?? .max))
     #expect(puzzle.regions.reduce(0) { $0 + $1.area } == puzzle.width * puzzle.height)
 
     var areas = [Int](repeating: 0, count: puzzle.regions.count)
@@ -79,6 +102,30 @@ struct PuzzleGeneratorTests {
         let puzzle = PuzzleGenerator.generate(from: makeNoisyPhoto(), settings: settings)
         expectValid(puzzle, settings: settings)
         #expect(puzzle.palette.count >= 2, "\(level) should keep several colors")
+    }
+
+    @Test(arguments: [("easy", PuzzleSettings.easy, 50), ("medium", .medium, 100), ("hard", .hard, 200)])
+    func busyPhotosAreSimplifiedToTheLevelsShapeLimit(level: String, settings: PuzzleSettings, limit: Int) throws {
+        #expect(settings.maximumRegionCount == limit)
+        let photo = try #require(makeBusyPhoto().makeCGImage())
+        let puzzle = try PuzzleGenerator.generate(from: photo, settings: settings)
+        expectValid(puzzle, settings: settings)
+        #expect(puzzle.regions.count <= limit, "\(level) allows at most \(limit) shapes")
+        // A busy photo uses most of the level's budget rather than collapsing into a few blobs.
+        #expect(puzzle.regions.count >= limit / 2, "\(level) made only \(puzzle.regions.count) shapes")
+    }
+
+    @Test func simplePhotosStayBelowTheLimit() throws {
+        // Two flat halves: two shapes at every level, nowhere near the limit.
+        let image = try #require(RGBAImage.render(width: 300, height: 200, antialias: false) { context in
+            context.setFillColor(CGColor(srgbRed: 0.2, green: 0.6, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 300, height: 120))
+            context.setFillColor(CGColor(srgbRed: 0.3, green: 0.8, blue: 0.3, alpha: 1))
+            context.fill(CGRect(x: 0, y: 120, width: 300, height: 80))
+        }?.makeCGImage())
+        for settings in [PuzzleSettings.easy, .medium, .hard] {
+            #expect(try PuzzleGenerator.generate(from: image, settings: settings).regions.count == 2)
+        }
     }
 
     @Test func harderLevelsHaveMoreRegions() throws {

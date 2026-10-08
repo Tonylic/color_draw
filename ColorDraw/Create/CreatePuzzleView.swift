@@ -1,7 +1,8 @@
 import ColorDrawKit
 import SwiftUI
 
-/// How hard a photo puzzle is: how many colors and how much detail.
+/// How hard a photo puzzle is: at most how many shapes (50 for about five-year-olds up to 200 for
+/// about eight-year-olds) and how many colors. Simple photos can have fewer shapes.
 enum Difficulty: String, CaseIterable, Identifiable {
     case easy, medium, hard
 
@@ -240,8 +241,10 @@ private struct DifficultyCard: View {
                     .font(.system(size: 40))
                 Text(difficulty.title)
                     .font(Theme.font(.headline))
-                Text("up to \(difficulty.settings.colorCount) colors")
+                Text("up to \(difficulty.settings.maximumRegionCount) shapes")
                     .font(Theme.font(.caption, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                     .opacity(0.9)
             }
             .foregroundStyle(isSelected ? .white : Theme.ink)
@@ -260,7 +263,7 @@ private struct DifficultyCard: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.colorCount) colors")
+        .accessibilityLabel("\(difficulty.title), up to \(difficulty.settings.maximumRegionCount) shapes")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

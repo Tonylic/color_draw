@@ -110,11 +110,11 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 15), "A preview should appear")
         snapshot("09-create-easy")
 
-        app.buttons["Tricky, up to 14 colors"].tap()
+        app.buttons["Tricky, up to 200 shapes"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         sleep(1)
         snapshot("10-create-tricky")
-        app.buttons["Easy, up to 6 colors"].tap()
+        app.buttons["Easy, up to 50 shapes"].tap()
 
         paint.tap()
         XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 15))

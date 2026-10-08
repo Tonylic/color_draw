@@ -16,8 +16,16 @@ little fingers tap or drag over the shapes to fill them in.
 
 - **Use any picture**: take a photo with the camera, pick one from Photos, or start with one of
   six built-in drawings (kitty, rainbow, fish, house, flower, rocket).
-- **Choose how tricky**: 🐣 *Easy* (up to 6 colors, big shapes), 🐰 *Medium* (up to 10) or
-  🦁 *Tricky* (up to 14 colors, more detail), with a live preview of the finished picture.
+- **Choose how tricky**, with a live preview of the finished picture:
+
+  | Level | Shapes (at most) | Colors (at most) | Made for |
+  |---|---|---|---|
+  | 🐣 Easy | 50 | 6 | about 5 years old |
+  | 🐰 Medium | 100 | 10 | in between |
+  | 🦁 Tricky | 200 | 14 | about 8 years old |
+
+  The numbers are limits: a busy photo is simplified down to them, while a simple one ends up
+  with fewer shapes.
 - **Paint by number**: pick a paint pot from the palette. Every shape that takes that color is
   striped in a light tint of it, so kids can see where to paint. Tap a shape, or drag a finger
   across many shapes at once. Only the right color sticks, so a picture can't be spoiled. A wrong
@@ -46,7 +54,7 @@ Reduce Motion, and its sounds follow the silent switch.
 The engine lives in [`Packages/ColorDrawKit`](Packages/ColorDrawKit) and is plain Swift and Core
 Graphics, so it is unit-tested on the Mac.
 
-1. **Shrink** the photo to a small working size (120 to 240 pixels on the long side, depending on
+1. **Shrink** the photo to a small working size (150 to 260 pixels on the long side, depending on
    difficulty). Fewer pixels means simpler shapes.
 2. **Smooth** it with an edge-preserving bilateral filter in CIE L\*a\*b\* space, which flattens
    texture and noise but keeps outlines.
@@ -54,7 +62,9 @@ Graphics, so it is unit-tested on the Mac.
    then give the palette a gentle "storybook" boost (brighter and more colorful).
    Flat-color artwork, like the built-in drawings, keeps its exact colors.
 4. **Clean up** with a majority filter, then find connected regions and fold every region that
-   is too small or too thin to paint into its best neighbor.
+   is too small or too thin to paint into its best neighbor. If there are still more shapes than
+   the level allows (50, 100 or 200), the smallest ones are folded in too, so the biggest and
+   most recognizable shapes are the ones that stay.
 5. **Place the numbers** at the deepest point of each region, found with an exact Euclidean
    distance transform. The number's size comes from the largest circle that fits there.
 6. **Smooth the outlines** by scaling the region map up about 10×. Each high-res pixel votes with

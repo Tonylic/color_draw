@@ -19,7 +19,7 @@ public enum SamplePicture: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// Settings that keep every little detail (eyes, stars, windows) of the drawings.
-    public static let settings = PuzzleSettings(colorCount: 24, maxDimension: 150, minimumRegionArea: 10, minimumRegionRadius: 1.5, smoothingPasses: 0, minimumColorDistance: 0)
+    public static let settings = PuzzleSettings(colorCount: 24, maximumRegionCount: 50, maxDimension: 150, minimumRegionArea: 10, minimumRegionRadius: 1.5, smoothingPasses: 0, minimumColorDistance: 0)
 
     /// Draws the picture without anti-aliasing so it has a handful of exact, flat colors.
     public func render(size: Int = 150) -> RGBAImage {

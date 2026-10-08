@@ -54,6 +54,21 @@ struct SegmentationTests {
         #expect(cleaned.allSatisfy { $0 == 0 }, "The speck and the thin line are both too small to paint")
     }
 
+    @Test func shapeLimitKeepsTheBiggestShapes() {
+        // A 20×20 checkerboard of 4×4 blocks (25 shapes), plus one big block of a third color.
+        var indices = [UInt8](repeating: 0, count: 400)
+        for y in 0..<20 { for x in 0..<20 { indices[y * 20 + x] = UInt8(((x / 4) + (y / 4)) % 2) } }
+        for y in 0..<12 { for x in 0..<12 { indices[y * 20 + x] = 2 } }
+        let palette = [LabColor(l: 30, a: 0, b: 0), LabColor(l: 70, a: 0, b: 0), LabColor(l: 50, a: 50, b: 0)]
+        let before = Segmentation.connectedComponents(indices, width: 20, height: 20).count
+        let cleaned = Segmentation.mergeTinyRegions(indices, palette: palette, width: 20, height: 20, minimumArea: 1, minimumRadius: 0, maximumCount: 5)
+        let after = Segmentation.connectedComponents(cleaned, width: 20, height: 20)
+        #expect(before > 5)
+        #expect(after.count <= 5)
+        // The big block is still there.
+        #expect(cleaned[5 * 20 + 5] == 2)
+    }
+
     @Test func bigRegionsSurviveMerging() {
         var indices = [UInt8](repeating: 0, count: 400)
         for y in 0..<20 { for x in 10..<20 { indices[y * 20 + x] = 1 } }

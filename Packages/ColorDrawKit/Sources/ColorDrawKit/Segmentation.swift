@@ -194,7 +194,9 @@ enum Segmentation {
         return best
     }
 
-    /// Repeatedly folds regions that are too small or too thin to paint into their best neighbor.
+    /// Repeatedly folds regions that are too small or too thin to paint into their best neighbor,
+    /// and, while there are more than `maximumCount` regions, the smallest remaining ones too (so
+    /// the biggest, most recognizable shapes are the ones that survive).
     /// Returns the cleaned color index map.
     static func mergeTinyRegions(
         _ indices: [UInt8],
@@ -203,7 +205,8 @@ enum Segmentation {
         height: Int,
         minimumArea: Int,
         minimumRadius: Float,
-        maximumPasses: Int = 12
+        maximumCount: Int = .max,
+        maximumPasses: Int = 20
     ) -> [UInt8] {
         var indices = indices
         for _ in 0..<maximumPasses {
@@ -214,8 +217,14 @@ enum Segmentation {
                 deepest[Int(id)] = max(deepest[Int(id)], distances[p])
             }
             let minimumDepthSquared = max(0, minimumRadius - 0.5) * max(0, minimumRadius - 0.5)
-            let isTiny = (0..<components.count).map { id in
+            var isTiny = (0..<components.count).map { id in
                 components.areas[id] < minimumArea || deepest[id] < minimumDepthSquared
+            }
+            // Still too many shapes for this level: fold the smallest of the rest as well.
+            let excess = (components.count - isTiny.lazy.filter { $0 }.count) - max(1, maximumCount)
+            if excess > 0 {
+                let smallest = (0..<components.count).filter { !isTiny[$0] }.sorted { components.areas[$0] < components.areas[$1] }
+                for id in smallest.prefix(excess) { isTiny[id] = true }
             }
             guard isTiny.contains(true), components.count > 1 else { break }
 
