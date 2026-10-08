@@ -23,7 +23,7 @@ struct PaletteBar: View {
                     AllColorsButton(colors: session.puzzle.palette) { showsAllColors = true }
                         .padding(.leading, 14)
                         .padding(.trailing, 2)
-                    PotStrip(session: session, colors: trayColors, potSize: Self.trayPotSize)
+                    PotStrip(session: session, colors: trayColors, potSize: Self.trayPotSize, alignment: .leading)
                         .background { WidthReader(width: $stripWidth) }
                 }
             } else {
@@ -61,6 +61,9 @@ private struct PotStrip: View {
     let session: PaintSession
     let colors: [Int]
     let potSize: CGFloat
+    /// Where the pots sit when they all fit: centered for the classic row, next to the All tile
+    /// for big palettes.
+    var alignment: Alignment = .center
     @State private var width: CGFloat = 0
     @State private var contentWidth: CGFloat = 0
 
@@ -92,8 +95,8 @@ private struct PotStrip: View {
                 .padding(.top, 16)
                 .padding(.bottom, 10)
                 .background { WidthReader(width: $contentWidth) }
-                // Centered when all the pots fit (e.g. on iPad).
-                .frame(minWidth: width)
+                // Centered (or leading) when all the pots fit, e.g. on iPad.
+                .frame(minWidth: width, alignment: alignment)
             }
             .accessibilityIdentifier("palette")
             // Fade the edges when there are more pots than fit, so children see they can scroll.

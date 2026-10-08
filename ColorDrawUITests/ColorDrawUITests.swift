@@ -122,23 +122,51 @@ final class ColorDrawUITests: XCTestCase {
     }
 
     func testBigPhotoPuzzlesUseTheColorChart() throws {
-        try pickSamplePhoto()
-        let tricky = app.buttons["Tricky, up to 200 colors"]
-        XCTAssertTrue(tricky.waitForExistence(timeout: 10))
-        tricky.tap()
-        // Wait for the Tricky preview itself (the previous level's preview may still be fading out).
-        let trickyPreview = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value BEGINSWITH 'Tricky'")).firstMatch
-        XCTAssertTrue(trickyPreview.waitForExistence(timeout: 30))
-        let colors = Int((trickyPreview.value as? String ?? "").split(separator: " ").dropFirst().first ?? "") ?? 0
-        XCTAssertGreaterThan(colors, 50, "A colorful photo on Tricky has lots of colors")
+        // Try the first few photos until one makes a colorful Tricky puzzle (on a real device the
+        // newest photos may be simple paintings saved by other tests).
+        var found = false
+        for attempt in 0..<6 where !found {
+            app.buttons["Photos"].tap()
+            let photos = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'"))
+            guard photos.firstMatch.waitForExistence(timeout: 10) else {
+                throw XCTSkip("The photo library has no photos")
+            }
+            let samples = app.images.matching(NSPredicate(format: "label MATCHES %@", "Photo, .*, [0-9]{4}, .*"))
+            let candidates = samples.count > attempt ? samples : photos
+            let index = samples.count > attempt ? attempt : attempt - samples.count
+            guard index < candidates.count else {
+                throw XCTSkip("No colorful photo in the library for this test")
+            }
+            candidates.element(boundBy: index).tap()
+
+            let tricky = app.buttons["Tricky, up to 200 colors"]
+            XCTAssertTrue(tricky.waitForExistence(timeout: 10))
+            tricky.tap()
+            // Wait for the Tricky preview itself (the previous level's may still be fading out).
+            let trickyPreview = app.images.matching(NSPredicate(format: "label == 'Preview of the coloring page' AND value BEGINSWITH 'Tricky'")).firstMatch
+            XCTAssertTrue(trickyPreview.waitForExistence(timeout: 30))
+            let colors = Int((trickyPreview.value as? String ?? "").split(separator: " ").dropFirst().first ?? "") ?? 0
+            if colors > 50 {
+                found = true
+            } else {
+                app.buttons["Close"].tap()
+                XCTAssertTrue(app.buttons["Photos"].waitForExistence(timeout: 5))
+            }
+        }
+        guard found else { throw XCTSkip("No colorful photo in the library for this test") }
         app.buttons["Let's Paint!"].tap()
-        XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 30))
 
         // Instead of one long row of pots: an "All colors" button and a few nearby pots.
         let allColors = app.buttons["All colors"]
         XCTAssertTrue(allColors.waitForExistence(timeout: 5))
+        // As many pots as fit: on a phone a handful, on a big iPad more, but never off screen.
         let trayPots = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color '"))
-        XCTAssertLessThanOrEqual(trayPots.count, 8, "The tray shows only a few pots")
+        let screen = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(trayPots.count, 0)
+        for pot in trayPots.allElementsBoundByIndex {
+            XCTAssertTrue(screen.contains(CGPoint(x: pot.frame.midX, y: pot.frame.midY)), "\(pot.label) is off screen")
+        }
         snapshot("12-big-puzzle")
 
         // The chart is split into pages of 50 colors.
@@ -148,14 +176,14 @@ final class ColorDrawUITests: XCTestCase {
         let secondPage = app.buttons["Colors 51 to 100"]
         XCTAssertTrue(secondPage.exists, "A photo this colorful has more than 50 colors")
         secondPage.tap()
-        let color77 = chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 77,'")).firstMatch
-        XCTAssertTrue(color77.waitForExistence(timeout: 3))
+        let color51 = chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 51,'")).firstMatch
+        XCTAssertTrue(color51.waitForExistence(timeout: 3))
         snapshot("13-color-chart")
-        color77.tap()
+        color51.tap()
 
-        // The chart closes and color 77 is now the paint in the tray.
+        // The chart closes and color 51 is now the paint in the tray.
         XCTAssertTrue(allColors.waitForExistence(timeout: 5))
-        let picked = pot(77)
+        let picked = pot(51)
         XCTAssertTrue(picked.waitForExistence(timeout: 3))
         XCTAssertTrue(picked.isSelected)
 
@@ -172,14 +200,14 @@ final class ColorDrawUITests: XCTestCase {
         allColors.tap()
         XCTAssertTrue(chart.waitForExistence(timeout: 5))
         app.buttons["Colors 51 to 100"].tap()
-        chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 77,'")).firstMatch.tap()
-        XCTAssertTrue(pot(77).waitForExistence(timeout: 3))
+        chart.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color 51,'")).firstMatch.tap()
+        XCTAssertTrue(pot(51).waitForExistence(timeout: 3))
 
-        // The light bulb finds a shape of color 77; tapping it paints.
+        // The light bulb finds a shape of color 51; tapping it paints.
         app.buttons["Find a shape to paint"].tap()
         let marker = app.descendants(matching: .any)["focusMarker"]
         XCTAssertTrue(marker.waitForExistence(timeout: 5))
-        XCTAssertEqual(marker.label, "Shape number 77")
+        XCTAssertEqual(marker.label, "Shape number 51")
         marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         snapshot("14-big-puzzle-painted")
         XCTAssertTrue(app.buttons["Home"].exists)
@@ -227,16 +255,18 @@ final class ColorDrawUITests: XCTestCase {
 
     // MARK: Helpers
 
-    /// Opens the photo picker and picks one of the simulator's sample photos. The system picker
-    /// runs in its own process; its photos show up as images labelled like "Photo, March 30,
-    /// 2018, 3:14 PM". Paintings that earlier test runs saved today have no year in the label.
+    /// Opens the photo picker and picks a photo. The system picker runs in its own process; its
+    /// photos show up as images labelled like "Photo, March 30, 2018, 3:14 PM". On the simulator
+    /// this prefers its sample photos (their labels carry a year, unlike paintings that earlier
+    /// test runs saved today); on a real device it falls back to the first photo in the library.
     private func pickSamplePhoto() throws {
         app.buttons["Photos"].tap()
-        let photo = app.images.matching(NSPredicate(format: "label MATCHES %@", "Photo, .*, [0-9]{4}, .*")).firstMatch
-        guard photo.waitForExistence(timeout: 10) else {
-            throw XCTSkip("The photo picker has no sample photos on this simulator")
+        let photos = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'"))
+        guard photos.firstMatch.waitForExistence(timeout: 10) else {
+            throw XCTSkip("The photo library has no photos")
         }
-        photo.tap()
+        let sample = app.images.matching(NSPredicate(format: "label MATCHES %@", "Photo, .*, [0-9]{4}, .*")).firstMatch
+        (sample.exists ? sample : photos.firstMatch).tap()
     }
 
     /// Accepts a system permission alert if one shows up.
