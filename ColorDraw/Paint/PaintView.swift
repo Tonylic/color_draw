@@ -118,7 +118,7 @@ struct PaintView: View {
             guard (try? await Task.sleep(for: .seconds(0.8))) != nil else { return }
             session.showStartHint()
             // Say the first tip out loud for children who can't read yet (only the first few times).
-            if showsStartTip && startTipsSpoken < 3 && SoundPlayer.shared.say(Self.startTip) {
+            if showsStartTip && startTipsSpoken < 3 && !UIAccessibility.isVoiceOverRunning && SoundPlayer.shared.say(Self.startTip) {
                 startTipsSpoken += 1
             }
             while (try? await Task.sleep(for: .seconds(2))) != nil {

@@ -186,13 +186,14 @@ final class PaintSession {
         lastActivity = Date()
         idleNudges += 1
         helpNudge += 1
+        // Moving the picture or VoiceOver's focus around on its own would disorient VoiceOver
+        // users, who can ask for help with the light bulb; for them only the bulb wiggles.
+        guard !UIAccessibility.isVoiceOverRunning else { return }
         switch idleNudges {
         case 1, 2:
             if canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == false {
                 canvas?.zoomToFit()
             }
-            // Pointing would keep moving VoiceOver's focus around; VoiceOver users have Find.
-            guard !UIAccessibility.isVoiceOverRunning else { break }
             Task { [weak self] in
                 guard (try? await Task.sleep(for: .seconds(0.5))) != nil,
                       let self, let region = canvas?.nearestUnpaintedRegion(of: selectedColor) else { return }
@@ -302,8 +303,8 @@ final class PaintSession {
         celebrationTask = Task { [weak self] in
             guard (try? await Task.sleep(for: .seconds(0.7))) != nil else { return }
             self?.showsCelebration = true
-            SoundPlayer.shared.say("You did it!")
-            UIAccessibility.post(notification: .announcement, argument: "You did it! The picture is finished.")
+            // VoiceOver already reads the celebration card; don't talk over it.
+            if !UIAccessibility.isVoiceOverRunning { SoundPlayer.shared.say("You did it!") }
         }
     }
 

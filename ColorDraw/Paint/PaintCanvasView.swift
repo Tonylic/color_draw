@@ -30,6 +30,8 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// offset when the drag began.
     private var panStartOffset: CGPoint?
     private var isMoveMode = false
+    /// True while the picture glides on after a one-finger flick.
+    private var isGliding = false
     private weak var focusMarker: UIView?
 
     /// Room kept free under the picture for the zoom buttons.
@@ -168,6 +170,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     // MARK: Painting gestures
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        // Like any scroll view: a tap on a gliding picture just stops it.
+        if isGliding {
+            stopGlide()
+            return
+        }
         let point = gesture.location(in: contentView)
         guard let region = region(at: point) else { return }
         if session.canPaint(region: region) {
@@ -191,6 +198,9 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             return
         }
         if gesture.state == .began {
+            // Catch a gliding picture first, so the finger's position is measured against what's
+            // actually on screen.
+            stopGlide()
             // Start where the finger first touched, not where the drag was recognized.
             let point = gesture.location(in: contentView)
             let translation = gesture.translation(in: contentView)
@@ -198,11 +208,6 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             let isZoomedIn = scrollView.zoomScale > 1.05
             let startsOnPaint = regions(near: start, radius: brushRadius / scrollView.zoomScale).contains(where: session.canPaint(region:))
             if isMoveMode || (isZoomedIn && !startsOnPaint) {
-                // Catch the picture where it is if it's still gliding from the last drag.
-                if let gliding = scrollView.layer.presentation()?.bounds.origin {
-                    scrollView.layer.removeAllAnimations()
-                    scrollView.contentOffset = gliding
-                }
                 panStartOffset = scrollView.contentOffset
             }
         }
@@ -247,10 +252,23 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             let velocity = gesture.velocity(in: scrollView)
             let current = scrollView.contentOffset
             let target = clampedOffset(CGPoint(x: current.x - velocity.x * 0.18, y: current.y - velocity.y * 0.18))
+            isGliding = true
             UIView.animate(withDuration: 0.4, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
                 self.scrollView.contentOffset = target
+            } completion: { _ in
+                self.isGliding = false
             }
         }
+    }
+
+    /// Stops a glide where the picture is on screen right now. Only touches our own glide, never
+    /// an in-flight zoom animation.
+    private func stopGlide() {
+        guard isGliding else { return }
+        isGliding = false
+        let onScreen = scrollView.layer.presentation()?.bounds.origin ?? scrollView.contentOffset
+        scrollView.layer.removeAllAnimations()
+        scrollView.contentOffset = onScreen
     }
 
     private func clampedOffset(_ offset: CGPoint) -> CGPoint {
@@ -347,8 +365,15 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         isMoveMode = isOn
     }
 
+    /// The part of the picture the child can see: the screen minus the strip under the controls.
+    private var visibleContentRect: CGRect {
+        var visible = scrollView.bounds
+        visible.size.height -= Self.bottomControlsHeight
+        return scrollView.convert(visible, to: contentView)
+    }
+
     func isAnyUnpaintedRegionVisible(of color: Int) -> Bool {
-        let visible = scrollView.convert(scrollView.bounds, to: contentView)
+        let visible = visibleContentRect
         return puzzle.regions.indices.contains { region in
             !session.progress.filled[region] && puzzle.regions[region].colorIndex == color && visible.contains(labelPoint(of: region))
         }
@@ -365,10 +390,10 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     }
 
     func point(at region: Int) {
-        // Only point at shapes the child can see right now.
-        let visible = scrollView.convert(scrollView.bounds, to: contentView)
-        guard visible.contains(labelPoint(of: region)) else { return }
-        showFocusMarker(on: region, showsHand: true)
+        // Only point at shapes the child can see right now. Automatic pointing never moves
+        // VoiceOver's focus; only the light bulb (`focus(on:)`) does.
+        guard visibleContentRect.contains(labelPoint(of: region)) else { return }
+        showFocusMarker(on: region, showsHand: true, movesVoiceOverFocus: false)
     }
 
     func nearestUnpaintedRegion(of color: Int) -> Int? {

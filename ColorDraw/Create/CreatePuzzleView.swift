@@ -218,7 +218,9 @@ struct CreatePuzzleView: View {
                 let artwork = try await store.create(puzzle: puzzle, title: title, level: difficulty.rawValue, sampleID: nil, thumbnail: thumbnail)
                 onCreated(artwork.id)
             } catch {
-                // Keep the sheet (and the child's photo) so they can try again.
+                // Keep the sheet (and the child's photo) so they can try again. The sheet shows
+                // its own message, so the home screen doesn't need to repeat it.
+                store.clearError()
                 isCreating = false
                 showSaveError = true
             }

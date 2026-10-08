@@ -60,9 +60,15 @@ final class ArtworkStore {
 
     func create(puzzle: Puzzle, title: String, level: String?, sampleID: String?, thumbnail: UIImage?) async throws -> ArtworkMetadata {
         guard let repository else { throw storageError ?? CocoaError(.fileWriteUnknown) }
-        let metadata = try await Task.detached(priority: .userInitiated) {
-            try repository.create(puzzle: puzzle, title: title, level: level, sampleID: sampleID, thumbnailPNG: thumbnail?.pngData())
-        }.value
+        let metadata: ArtworkMetadata
+        do {
+            metadata = try await Task.detached(priority: .userInitiated) {
+                try repository.create(puzzle: puzzle, title: title, level: level, sampleID: sampleID, thumbnailPNG: thumbnail?.pngData())
+            }.value
+        } catch {
+            storageError = error
+            throw error
+        }
         artworks.insert(metadata, at: 0)
         thumbnails[metadata.id] = thumbnail
         return metadata
@@ -91,6 +97,8 @@ final class ArtworkStore {
             storageError = error
             return false
         }
+        // The painting is safe again; don't warn about an earlier failure that's been retried.
+        storageError = nil
         artworks.removeAll { $0.id == id }
         artworks.insert(metadata, at: 0)
         if let image = thumbnail() {
