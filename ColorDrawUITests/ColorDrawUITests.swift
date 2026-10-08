@@ -1,0 +1,142 @@
+import XCTest
+
+/// End-to-end tests that play the game like a child would.
+///
+/// Set `TEST_RUNNER_SCREENSHOT_DIR=/some/folder` when running `xcodebuild test` to also save
+/// screenshots of each step there.
+final class ColorDrawUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments += ["-resetPaintings", "-uiTesting"]
+        app.launch()
+    }
+
+    func testHomeScreenOffersEveryWayToStart() {
+        XCTAssertTrue(app.buttons["Camera"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Photos"].exists)
+        for picture in ["Kitty", "Rainbow", "Fishy", "House", "Flower", "Rocket"] {
+            XCTAssertTrue(app.buttons[picture].exists, "\(picture) should be on the home screen")
+        }
+        XCTAssertFalse(app.staticTexts["My Paintings"].exists, "No paintings yet after a reset")
+        snapshot("01-home")
+    }
+
+    func testPaintingAPictureFromStartToFinish() {
+        app.buttons["Kitty"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        XCTAssertEqual(progressValue, "0 percent painted")
+        snapshot("02-paint-start")
+
+        // Tapping a shape with the wrong paint does nothing.
+        app.buttons["Find a shape to paint"].tap()
+        let marker = app.descendants(matching: .any)["focusMarker"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 3))
+        let needed = Int(marker.label.split(separator: " ").last ?? "") ?? 1
+        let other = needed == 1 ? 2 : 1
+        app.buttons["Color \(other)"].tap()
+        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertEqual(progressValue, "0 percent painted")
+        app.buttons["Color \(needed)"].tap()
+
+        // Find each shape and paint it, until the picture is done.
+        let celebration = app.staticTexts["You did it!"]
+        var attempts = 0
+        while !celebration.exists && attempts < 80 {
+            attempts += 1
+            app.buttons["Find a shape to paint"].tap()
+            guard marker.waitForExistence(timeout: 3) else { continue }
+            marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if attempts == 6 { snapshot("03-painting") }
+        }
+        XCTAssertTrue(celebration.waitForExistence(timeout: 5), "Painting every shape should finish the picture")
+        sleep(1)
+        snapshot("04-celebration")
+
+        app.buttons["Look"].tap()
+        XCTAssertEqual(progressValue, "100 percent painted")
+        snapshot("05-finished")
+
+        app.buttons["Home"].tap()
+        XCTAssertTrue(app.staticTexts["My Paintings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Kitty"].firstMatch.exists)
+        snapshot("06-home-with-painting")
+    }
+
+    func testDraggingPaintsManyShapes() {
+        app.buttons["Rainbow"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        // Sweep a finger across the whole picture with every color selected in turn.
+        for color in 1...12 where app.buttons["Color \(color)"].exists {
+            app.buttons["Color \(color)"].tap()
+            for row in stride(from: 0.1, through: 0.9, by: 0.2) {
+                canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: row))
+                    .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: row)))
+            }
+        }
+        let painted = Int(progressValue.split(separator: " ").first ?? "") ?? 0
+        XCTAssertGreaterThan(painted, 30, "Dragging should paint lots of shapes")
+        snapshot("07-dragged")
+    }
+
+    func testTurningAPhotoIntoAPuzzle() throws {
+        app.buttons["Photos"].tap()
+        // The system photo picker runs in its own process; its photos show up as images.
+        let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch
+        guard photo.waitForExistence(timeout: 10) else {
+            throw XCTSkip("The photo picker has no photos on this simulator")
+        }
+        photo.tap()
+
+        let paint = app.buttons["Let's Paint!"]
+        XCTAssertTrue(paint.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["How tricky?"].exists)
+        let preview = app.images["Preview of the coloring page"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15), "A preview should appear")
+        snapshot("09-create-easy")
+
+        app.buttons["Tricky, 16 colors"].tap()
+        XCTAssertTrue(preview.waitForExistence(timeout: 15))
+        sleep(1)
+        snapshot("10-create-tricky")
+        app.buttons["Easy, 6 colors"].tap()
+
+        paint.tap()
+        XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 15))
+        snapshot("11-photo-puzzle")
+        app.buttons["Home"].tap()
+        XCTAssertTrue(app.staticTexts["My Paintings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["My Photo"].exists)
+    }
+
+    func testZoomButtons() {
+        app.buttons["House"].tap()
+        XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 10))
+        app.buttons["Zoom in"].tap()
+        app.buttons["Zoom in"].tap()
+        sleep(1)
+        snapshot("08-zoomed")
+        app.buttons["Show whole picture"].tap()
+    }
+
+    // MARK: Helpers
+
+    private var progressValue: String {
+        app.otherElements["Progress"].value as? String ?? ""
+    }
+
+    private func snapshot(_ name: String) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let folder = ProcessInfo.processInfo.environment["SCREENSHOT_DIR"] {
+            try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
+        }
+    }
+}
