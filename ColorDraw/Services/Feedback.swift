@@ -22,17 +22,33 @@ enum Haptics {
 
 /// Saves finished paintings to the photo library (asks for add-only access the first time).
 enum PhotoSaver {
-    static func save(_ image: UIImage) async -> Bool {
+    enum Result {
+        case saved
+        /// The grown-ups said no (or parental controls forbid it); only Settings can change that.
+        case notAllowed
+        case failed
+    }
+
+    static func save(_ image: UIImage) async -> Result {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else { return false }
-        guard let data = image.pngData() else { return false }
+        guard status == .authorized || status == .limited else { return .notAllowed }
+        guard let data = image.pngData() else { return .failed }
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
             }
-            return true
+            return .saved
         } catch {
-            return false
+            return .failed
         }
+    }
+}
+
+enum AppSettings {
+    /// Opens this app's page in the Settings app, where grown-ups can allow camera or Photos access.
+    @MainActor
+    static func open() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }

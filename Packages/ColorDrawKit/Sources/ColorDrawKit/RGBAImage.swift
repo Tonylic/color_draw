@@ -80,30 +80,18 @@ public struct RGBAImage: Sendable, Equatable {
 
 extension CGImage {
     /// Wraps a copy of a straight-alpha RGBA8 buffer as an sRGB image.
-    static func make(rgbaBytes: [UInt8], width: Int, height: Int, premultiplied: Bool = false) -> CGImage? {
-        guard let provider = CGDataProvider(data: Data(rgbaBytes) as CFData) else { return nil }
-        let alpha: CGImageAlphaInfo = premultiplied ? .premultipliedLast : .last
-        return CGImage(
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: width * 4,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGBitmapInfo(rawValue: alpha.rawValue),
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: true,
-            intent: .defaultIntent
-        )
+    static func make(rgbaBytes: [UInt8], width: Int, height: Int) -> CGImage? {
+        make(data: Data(rgbaBytes), width: width, height: height, alpha: .last)
     }
 
     /// Wraps a copy of a buffer of packed pixels (see `RGBColor.pixel`). On little-endian
     /// hardware (every Apple device) each `UInt32` lies in memory as the bytes R, G, B, A.
-    static func make(pixels: [UInt32], width: Int, height: Int, premultiplied: Bool = false) -> CGImage? {
-        let data = pixels.withUnsafeBufferPointer { Data(buffer: $0) }
+    static func make(pixels: [UInt32], width: Int, height: Int, alpha: CGImageAlphaInfo) -> CGImage? {
+        make(data: pixels.withUnsafeBufferPointer { Data(buffer: $0) }, width: width, height: height, alpha: alpha)
+    }
+
+    private static func make(data: Data, width: Int, height: Int, alpha: CGImageAlphaInfo) -> CGImage? {
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
-        let alpha: CGImageAlphaInfo = premultiplied ? .premultipliedLast : .last
         return CGImage(
             width: width,
             height: height,

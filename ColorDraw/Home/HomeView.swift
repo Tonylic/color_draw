@@ -1,3 +1,4 @@
+import AVFoundation
 import ColorDrawKit
 import PhotosUI
 import SwiftUI
@@ -13,6 +14,7 @@ struct HomeView: View {
     @State private var showCamera = false
     @State private var cameraPhoto: UIImage?
     @State private var showNoCamera = false
+    @State private var showCameraPermissionHelp = false
     @State private var showPhotoError = false
     @State private var isLoadingPhoto = false
     @State private var openArtwork: ArtworkLink?
@@ -35,6 +37,11 @@ struct HomeView: View {
                         myPaintings
                     }
                     pictures
+                    Label("Your pictures stay on this device.", systemImage: "lock.fill")
+                        .font(Theme.font(.footnote, weight: .semibold))
+                        .foregroundStyle(Theme.softInk)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 12)
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -69,6 +76,17 @@ struct HomeView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("This device can't take pictures. Try Photos instead!")
+        }
+        .alert("Ask a grown-up", isPresented: $showCameraPermissionHelp) {
+            Button("Open Settings") { AppSettings.open() }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("Color Draw needs permission to use the camera. A grown-up can turn it on in Settings.")
+        }
+        .alert("Oops!", isPresented: Binding(get: { store.storageError != nil }, set: { if !$0 { store.clearError() } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Your paintings couldn't be saved. Is the device full?")
         }
         .alert("Oops!", isPresented: $showPhotoError) {
             Button("OK", role: .cancel) {}
@@ -115,11 +133,7 @@ struct HomeView: View {
     private var photoButtons: some View {
         HStack(spacing: 14) {
             Button {
-                if CameraPicker.isAvailable {
-                    showCamera = true
-                } else {
-                    showNoCamera = true
-                }
+                openCamera()
             } label: {
                 BigButtonLabel(title: "Camera", systemImage: "camera.fill")
             }
@@ -180,7 +194,29 @@ struct HomeView: View {
 
     // MARK: Actions
 
+    private func openCamera() {
+        guard CameraPicker.isAvailable else {
+            showNoCamera = true
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            showCamera = true
+        case .notDetermined:
+            Task {
+                if await AVCaptureDevice.requestAccess(for: .video) {
+                    showCamera = true
+                } else {
+                    showCameraPermissionHelp = true
+                }
+            }
+        default:
+            showCameraPermissionHelp = true
+        }
+    }
+
     private func loadPhoto(_ item: PhotosPickerItem) {
+        artworkToOpenNext = nil
         isLoadingPhoto = true
         Task {
             defer {
@@ -199,10 +235,15 @@ struct HomeView: View {
     private func useCameraPhoto() {
         guard let photo = cameraPhoto else { return }
         cameraPhoto = nil
-        if let image = ImageLoader.image(from: photo) {
-            pickedPhoto = PickedPhoto(image: image)
-        } else {
-            showPhotoError = true
+        artworkToOpenNext = nil
+        isLoadingPhoto = true
+        Task {
+            defer { isLoadingPhoto = false }
+            if let image = await ImageLoader.image(from: photo) {
+                pickedPhoto = PickedPhoto(image: image)
+            } else {
+                showPhotoError = true
+            }
         }
     }
 
@@ -222,10 +263,9 @@ struct HomeView: View {
             defer { preparingSample = nil }
             let (puzzle, thumbnail) = await Task.detached(priority: .userInitiated) { () -> (Puzzle, UIImage?) in
                 let puzzle = sample.makePuzzle()
-                let detail = DetailMap(puzzle: puzzle, scale: 3)
-                let thumbnail = PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { _ in .blank }, outputWidth: 360)
-                return (puzzle, thumbnail.map(UIImage.init(cgImage:)))
+                return (puzzle, PuzzleSnapshot.thumbnail(of: puzzle, painted: false, width: 360).map(UIImage.init(cgImage:)))
             }.value
+            // A failure shows up through `store.storageError`.
             if let artwork = try? await store.create(puzzle: puzzle, title: sample.title, level: nil, sampleID: sample.rawValue, thumbnail: thumbnail) {
                 openArtwork = ArtworkLink(id: artwork.id)
             }

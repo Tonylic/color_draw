@@ -55,10 +55,10 @@ enum Quantizer {
         let sampleCount = min(n, 24_000)
         var sample = [LabColor]()
         sample.reserveCapacity(sampleCount)
-        let stride = Double(n) / Double(sampleCount)
+        let step = Double(n) / Double(sampleCount)
         for s in 0..<sampleCount {
-            let jitter = Double.random(in: 0..<stride, using: &rng)
-            let index = min(n - 1, Int(Double(s) * stride + jitter))
+            let jitter = Double.random(in: 0..<step, using: &rng)
+            let index = min(n - 1, Int(Double(s) * step + jitter))
             sample.append(image.color(at: index))
         }
 

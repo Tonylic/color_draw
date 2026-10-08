@@ -62,18 +62,6 @@ public struct Puzzle: Codable, Equatable, Sendable {
         return groups
     }
 
-    /// The finished picture at working resolution (every region painted).
-    public func renderFinished() -> RGBAImage {
-        var pixels = [UInt8](repeating: 255, count: width * height * 4)
-        for (p, region) in regionMap.enumerated() {
-            let color = palette[regions[Int(region)].colorIndex]
-            pixels[p * 4] = color.r
-            pixels[p * 4 + 1] = color.g
-            pixels[p * 4 + 2] = color.b
-        }
-        return RGBAImage(width: width, height: height, pixels: pixels)
-    }
-
     // MARK: Codable — the region map is stored as raw little-endian bytes to keep files small.
 
     private enum CodingKeys: String, CodingKey {
@@ -91,7 +79,8 @@ public struct Puzzle: Codable, Equatable, Sendable {
         let width = try container.decode(Int.self, forKey: .width)
         let height = try container.decode(Int.self, forKey: .height)
         let data = try container.decode(Data.self, forKey: .regionMap)
-        guard width > 0, height > 0, data.count == width * height * 2 else {
+        // Puzzles are small; anything huge is a corrupt file (and must not overflow the math below).
+        guard (1...4096).contains(width), (1...4096).contains(height), data.count == width * height * 2 else {
             throw DecodingError.dataCorruptedError(forKey: .regionMap, in: container, debugDescription: "Region map has the wrong size")
         }
         self.width = width
@@ -101,8 +90,15 @@ public struct Puzzle: Codable, Equatable, Sendable {
         }
         regions = try container.decode([PuzzleRegion].self, forKey: .regions)
         palette = try container.decode([RGBColor].self, forKey: .palette)
-        guard regionMap.allSatisfy({ Int($0) < regions.count }),
-              regions.allSatisfy({ $0.colorIndex >= 0 && $0.colorIndex < palette.count }) else {
+        let regionsAreValid = regions.allSatisfy { region in
+            palette.indices.contains(region.colorIndex)
+                && region.area > 0
+                && 0 <= region.minX && region.minX <= region.maxX && region.maxX < width
+                && 0 <= region.minY && region.minY <= region.maxY && region.maxY < height
+                && (0..<Float(width)).contains(region.labelX) && (0..<Float(height)).contains(region.labelY)
+                && region.labelRadius.isFinite && region.labelRadius > 0
+        }
+        guard regionsAreValid, regionMap.allSatisfy({ Int($0) < regions.count }) else {
             throw DecodingError.dataCorruptedError(forKey: .regions, in: container, debugDescription: "Puzzle references missing regions or colors")
         }
     }

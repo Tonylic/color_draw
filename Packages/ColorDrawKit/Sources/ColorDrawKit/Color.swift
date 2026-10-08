@@ -31,6 +31,49 @@ public struct RGBColor: Codable, Hashable, Sendable {
     public var prefersDarkText: Bool { luminance > 0.36 }
 
     public var lab: LabColor { ColorMath.lab(r: r, g: g, b: b) }
+
+    /// A plain English name ("light blue", "dark green", "pink"…) for VoiceOver.
+    public var name: String {
+        let lab = self.lab
+        let red = Double(r) / 255, green = Double(g) / 255, blue = Double(b) / 255
+        let value = max(red, green, blue)
+        let delta = value - min(red, green, blue)
+        if lab.chroma < 10 || delta < 0.08 {
+            switch lab.l {
+            case ..<22: return "black"
+            case ..<45: return "dark gray"
+            case ..<75: return "gray"
+            case ..<93: return "light gray"
+            default: return "white"
+            }
+        }
+        // HSV hue in degrees: 0 red, 60 yellow, 120 green, 240 blue.
+        var hue: Double
+        if value == red {
+            hue = 60 * ((green - blue) / delta)
+        } else if value == green {
+            hue = 60 * ((blue - red) / delta + 2)
+        } else {
+            hue = 60 * ((red - green) / delta + 4)
+        }
+        if hue < 0 { hue += 360 }
+
+        let base: String
+        switch hue {
+        case ..<15, 345...: base = lab.l > 72 ? "pink" : "red"
+        case ..<45: base = value < 0.6 ? "brown" : (lab.l > 85 ? "peach" : "orange")
+        case ..<70: base = value < 0.6 ? "olive" : "yellow"
+        case ..<160: base = "green"
+        case ..<200: base = "teal"
+        case ..<250: base = "blue"
+        case ..<290: base = "purple"
+        default: base = "pink"
+        }
+        if ["brown", "peach", "olive"].contains(base) { return base }
+        if lab.l > 78 && base != "yellow" { return "light \(base)" }
+        if lab.l < 35 { return "dark \(base)" }
+        return base
+    }
 }
 
 /// A color in CIE L*a*b* (D65) space, where Euclidean distance roughly matches how different colors look.

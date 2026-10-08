@@ -4,6 +4,8 @@ import SwiftUI
 /// The paint pots: one big numbered blob per color. Finished colors get a check mark.
 struct PaletteBar: View {
     let session: PaintSession
+    @State private var width: CGFloat = 0
+    @State private var contentWidth: CGFloat = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -17,9 +19,9 @@ struct PaletteBar: View {
                                 number: index + 1,
                                 color: session.puzzle.palette[index],
                                 remaining: session.progress.remainingByColor[index],
-                                total: total(of: index),
+                                total: session.progress.totalByColor[index],
                                 isSelected: index == session.selectedColor,
-                                wiggle: session.hint?.color == index ? session.hint?.token ?? 0 : 0
+                                wiggle: session.hintTokens[index]
                             )
                         }
                         .buttonStyle(PotButtonStyle())
@@ -29,18 +31,35 @@ struct PaletteBar: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 16)
                 .padding(.bottom, 10)
+                .background { WidthReader(width: $contentWidth) }
+                // Centered when all the pots fit (e.g. on iPad).
+                .frame(minWidth: width)
+            }
+            // Fade the edges when there are more pots than fit, so children see they can scroll.
+            .mask {
+                if contentWidth > width + 1 {
+                    LinearGradient(
+                        stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.05),
+                                .init(color: .black, location: 0.95), .init(color: .clear, location: 1)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                } else {
+                    Color.black
+                }
             }
             .onChange(of: session.selectedColor) { _, color in
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     proxy.scrollTo(color, anchor: .center)
                 }
             }
-            .onChange(of: session.hint?.token) { _, _ in
-                guard let color = session.hint?.color else { return }
+            .onChange(of: session.hintTokens) { _, _ in
+                guard let color = session.hintedColor else { return }
                 withAnimation { proxy.scrollTo(color, anchor: .center) }
             }
             .onAppear { proxy.scrollTo(session.selectedColor, anchor: .center) }
         }
+        .background { WidthReader(width: $width) }
         .background {
             UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
                 .fill(.white)
@@ -48,9 +67,18 @@ struct PaletteBar: View {
                 .ignoresSafeArea(edges: .bottom)
         }
     }
+}
 
-    private func total(of color: Int) -> Int {
-        session.puzzle.regions.reduce(0) { $0 + ($1.colorIndex == color ? 1 : 0) }
+/// Reports the width of the view it's placed behind.
+private struct WidthReader: View {
+    @Binding var width: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            Color.clear
+                .onAppear { width = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, newWidth in width = newWidth }
+        }
     }
 }
 
@@ -71,6 +99,7 @@ struct PaintPot: View {
     /// Changing this makes the pot wiggle ("this is the color you need!").
     let wiggle: Int
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let size: CGFloat = 58
 
     var body: some View {
@@ -86,7 +115,7 @@ struct PaintPot: View {
                 .rotationEffect(.degrees(-90))
             Circle()
                 .fill(Color(color).gradient)
-                .overlay(Circle().stroke(Theme.ink.opacity(0.12), lineWidth: 1.5))
+                .overlay(Circle().stroke(Theme.ink.opacity(0.25), lineWidth: 2))
                 .overlay(alignment: .topLeading) {
                     Ellipse().fill(.white.opacity(0.45))
                         .frame(width: size * 0.26, height: size * 0.16)
@@ -124,20 +153,35 @@ struct PaintPot: View {
         .scaleEffect(isSelected ? 1.12 : 1)
         .opacity(done && !isSelected ? 0.55 : 1)
         .animation(.spring(response: 0.35, dampingFraction: 0.6), value: isSelected)
-        .keyframeAnimator(initialValue: 0.0, trigger: wiggle) { content, angle in
-            content.rotationEffect(.degrees(angle))
+        .keyframeAnimator(initialValue: PotWiggle(), trigger: wiggle) { content, wiggle in
+            content
+                .rotationEffect(.degrees(wiggle.angle))
+                .scaleEffect(wiggle.scale)
         } keyframes: { _ in
-            KeyframeTrack {
-                SpringKeyframe(-16, duration: 0.1)
-                SpringKeyframe(14, duration: 0.12)
-                SpringKeyframe(-10, duration: 0.12)
-                SpringKeyframe(6, duration: 0.12)
-                SpringKeyframe(0, duration: 0.15)
+            KeyframeTrack(\.angle) {
+                if reduceMotion {
+                    LinearKeyframe(0, duration: 0.5)
+                } else {
+                    SpringKeyframe(-16, duration: 0.1)
+                    SpringKeyframe(14, duration: 0.12)
+                    SpringKeyframe(-10, duration: 0.12)
+                    SpringKeyframe(6, duration: 0.12)
+                    SpringKeyframe(0, duration: 0.15)
+                }
+            }
+            KeyframeTrack(\.scale) {
+                SpringKeyframe(1.2, duration: 0.15)
+                SpringKeyframe(1.0, duration: 0.45)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Color \(number)")
+        .accessibilityLabel("Color \(number), \(color.name)")
         .accessibilityValue(done ? "All done" : "\(remaining) left")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
+}
+
+private struct PotWiggle {
+    var angle: Double = 0
+    var scale: Double = 1
 }

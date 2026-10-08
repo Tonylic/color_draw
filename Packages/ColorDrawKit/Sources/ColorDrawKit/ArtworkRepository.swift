@@ -28,6 +28,25 @@ public struct ArtworkMetadata: Codable, Identifiable, Hashable, Sendable {
 
     public var isComplete: Bool { completedAt != nil }
     public var fraction: Double { regionCount == 0 ? 0 : Double(filledRegions.count) / Double(regionCount) }
+
+    // Tolerant decoding: only `id` is essential. Anything else that is missing (say, from an
+    // older version of the app) falls back to a default instead of making the painting vanish.
+    private enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, updatedAt, level, sampleID, regionCount, filledRegions, completedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = (try? container.decodeIfPresent(String.self, forKey: .title)) ?? "My Picture"
+        createdAt = (try? container.decodeIfPresent(Date.self, forKey: .createdAt)) ?? Date(timeIntervalSince1970: 0)
+        updatedAt = (try? container.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? createdAt
+        level = try? container.decodeIfPresent(String.self, forKey: .level)
+        sampleID = try? container.decodeIfPresent(String.self, forKey: .sampleID)
+        regionCount = (try? container.decodeIfPresent(Int.self, forKey: .regionCount)) ?? 0
+        filledRegions = (try? container.decodeIfPresent([Int].self, forKey: .filledRegions)) ?? []
+        completedAt = try? container.decodeIfPresent(Date.self, forKey: .completedAt)
+    }
 }
 
 /// Stores paintings on disk, one folder per painting:
@@ -52,6 +71,18 @@ public struct ArtworkRepository: Sendable {
     private func metadataURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("meta.json") }
     private func puzzleURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("puzzle.plist") }
     public func thumbnailURL(_ id: UUID) -> URL { folder(id).appendingPathComponent("thumbnail.png") }
+
+    /// Deletes folders left behind by a create that never finished (no metadata, or no puzzle).
+    /// Call only at launch, before any painting is being created.
+    public func removeIncompleteFolders() {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders {
+            guard let id = UUID(uuidString: folder.lastPathComponent) else { continue }
+            let complete = FileManager.default.fileExists(atPath: metadataURL(id).path)
+                && FileManager.default.fileExists(atPath: puzzleURL(id).path)
+            if !complete { try? FileManager.default.removeItem(at: folder) }
+        }
+    }
 
     /// All paintings, most recently touched first. Unreadable folders are skipped.
     public func loadAll() -> [ArtworkMetadata] {

@@ -8,6 +8,7 @@ struct PaintProgressTests {
 
     @Test func startsEmpty() {
         let progress = PaintProgress(puzzle: puzzle)
+        #expect(progress.totalByColor == puzzle.regionsByColor.map(\.count))
         #expect(progress.filledCount == 0)
         #expect(!progress.isComplete)
         #expect(progress.fraction == 0)
@@ -99,6 +100,36 @@ struct ArtworkRepositoryTests {
         try FileManager.default.createDirectory(at: repository.rootURL.appendingPathComponent(UUID().uuidString), withIntermediateDirectories: true)
 
         #expect(repository.loadAll().map(\.id) == [newer.id, older.id])
+    }
+
+    @Test func oldOrPartialMetadataStillLoads() throws {
+        let repository = makeRepository()
+        defer { try? FileManager.default.removeItem(at: repository.rootURL) }
+        let created = try repository.create(puzzle: SamplePicture.rocket.makePuzzle(), title: "Rocket", level: nil, sampleID: "rocket", thumbnailPNG: nil)
+        // Rewrite the metadata with only an id, like a file from a much older app version.
+        let metaURL = repository.rootURL.appendingPathComponent(created.id.uuidString).appendingPathComponent("meta.json")
+        try JSONSerialization.data(withJSONObject: ["id": created.id.uuidString, "title": "Rocket"]).write(to: metaURL)
+        let loaded = try #require(repository.loadAll().first)
+        #expect(loaded.id == created.id)
+        #expect(loaded.title == "Rocket")
+        #expect(loaded.filledRegions.isEmpty)
+        #expect(!loaded.isComplete)
+    }
+
+    @Test func corruptMetadataIsSkippedAndHalfMadeFoldersAreCleanedUp() throws {
+        let repository = makeRepository()
+        defer { try? FileManager.default.removeItem(at: repository.rootURL) }
+        let puzzle = SamplePicture.flower.makePuzzle()
+        let good = try repository.create(puzzle: puzzle, title: "Good", level: nil, sampleID: nil, thumbnailPNG: nil)
+        let broken = try repository.create(puzzle: puzzle, title: "Broken", level: nil, sampleID: nil, thumbnailPNG: nil)
+        try Data("not json".utf8).write(to: repository.rootURL.appendingPathComponent(broken.id.uuidString).appendingPathComponent("meta.json"))
+        let halfMade = repository.rootURL.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: halfMade, withIntermediateDirectories: true)
+
+        #expect(repository.loadAll().map(\.id) == [good.id])
+        repository.removeIncompleteFolders()
+        #expect(!FileManager.default.fileExists(atPath: halfMade.path))
+        #expect(repository.loadAll().map(\.id) == [good.id])
     }
 
     @Test func emptyWhenNothingSaved() {

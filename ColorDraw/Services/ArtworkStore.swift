@@ -8,7 +8,7 @@ import UIKit
 final class ArtworkStore {
     private(set) var artworks: [ArtworkMetadata] = []
     private(set) var thumbnails: [UUID: UIImage] = [:]
-    /// Set when the storage folder can't be used; paintings then live only until the app quits.
+    /// The last thing that went wrong while saving or deleting, for the home screen to report.
     private(set) var storageError: Error?
 
     private let repository: ArtworkRepository?
@@ -24,6 +24,8 @@ final class ArtworkStore {
                 storageError = error
             }
         }
+        // Nothing is being created yet, so any half-written folder is left over from a crash.
+        self.repository?.removeIncompleteFolders()
         reload()
     }
 
@@ -37,7 +39,7 @@ final class ArtworkStore {
         return ArtworkStore()
     }
 
-    func reload() {
+    private func reload() {
         guard let repository else { return }
         artworks = repository.loadAll()
         var images: [UUID: UIImage] = [:]
@@ -57,10 +59,9 @@ final class ArtworkStore {
     }
 
     func create(puzzle: Puzzle, title: String, level: String?, sampleID: String?, thumbnail: UIImage?) async throws -> ArtworkMetadata {
-        guard let repository else { throw CocoaError(.fileWriteUnknown) }
-        let png = thumbnail?.pngData()
+        guard let repository else { throw storageError ?? CocoaError(.fileWriteUnknown) }
         let metadata = try await Task.detached(priority: .userInitiated) {
-            try repository.create(puzzle: puzzle, title: title, level: level, sampleID: sampleID, thumbnailPNG: png)
+            try repository.create(puzzle: puzzle, title: title, level: level, sampleID: sampleID, thumbnailPNG: thumbnail?.pngData())
         }.value
         artworks.insert(metadata, at: 0)
         thumbnails[metadata.id] = thumbnail
@@ -68,35 +69,49 @@ final class ArtworkStore {
     }
 
     func loadPuzzle(_ id: UUID) async throws -> Puzzle {
-        guard let repository else { throw CocoaError(.fileReadNoSuchFile) }
+        guard let repository else { throw storageError ?? CocoaError(.fileReadNoSuchFile) }
         return try await Task.detached(priority: .userInitiated) {
             try repository.loadPuzzle(id)
         }.value
     }
 
-    /// Records painting progress. Writes are small, so they happen right away.
-    func saveProgress(_ id: UUID, filledRegions: [Int], isComplete: Bool, thumbnail: UIImage?) {
-        guard var metadata = artwork(id) else { return }
+    /// Records painting progress. The small metadata file is written right away; the thumbnail
+    /// is encoded and written in the background. Returns `false` if the progress couldn't be saved.
+    @discardableResult
+    func saveProgress(_ id: UUID, filledRegions: [Int], isComplete: Bool, thumbnail: UIImage?) -> Bool {
+        guard let repository, var metadata = artwork(id) else { return false }
         metadata.filledRegions = filledRegions
         metadata.updatedAt = Date()
         if isComplete, metadata.completedAt == nil { metadata.completedAt = Date() }
         do {
-            try repository?.save(metadata)
-            if let thumbnail, let png = thumbnail.pngData() {
-                try repository?.saveThumbnail(png, for: id)
-                thumbnails[id] = thumbnail
-            }
+            try repository.save(metadata)
         } catch {
             storageError = error
+            return false
         }
         artworks.removeAll { $0.id == id }
         artworks.insert(metadata, at: 0)
+        if let thumbnail {
+            thumbnails[id] = thumbnail
+            Task.detached(priority: .utility) {
+                if let png = thumbnail.pngData() { try? repository.saveThumbnail(png, for: id) }
+            }
+        }
+        return true
     }
 
     func delete(_ id: UUID) {
-        try? repository?.delete(id)
-        artworks.removeAll { $0.id == id }
-        thumbnails[id] = nil
+        do {
+            try repository?.delete(id)
+            artworks.removeAll { $0.id == id }
+            thumbnails[id] = nil
+        } catch {
+            storageError = error
+        }
+    }
+
+    func clearError() {
+        storageError = nil
     }
 }
 
@@ -109,15 +124,8 @@ final class SampleCatalog {
     func loadPreviews() async {
         guard previews.isEmpty else { return }
         for sample in SamplePicture.allCases {
-            let image = await Task.detached(priority: .utility) { () -> CGImage? in
-                let puzzle = sample.makePuzzle()
-                let detail = DetailMap(puzzle: puzzle, scale: 3)
-                return PuzzleSnapshot.render(
-                    puzzle: puzzle,
-                    detail: detail,
-                    appearance: { .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) },
-                    outputWidth: 360
-                )
+            let image = await Task.detached(priority: .utility) {
+                PuzzleSnapshot.thumbnail(of: sample.makePuzzle(), painted: true, width: 360)
             }.value
             if let image { previews[sample] = UIImage(cgImage: image) }
         }

@@ -23,6 +23,25 @@ struct PuzzleCodingTests {
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(Puzzle.self, from: corrupt) }
     }
 
+    @Test func rejectsHugeOrInconsistentPuzzles() throws {
+        let puzzle = SamplePicture.house.makePuzzle()
+        let original = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(puzzle)) as? [String: Any])
+
+        var huge = original
+        huge["width"] = 1 << 62
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Puzzle.self, from: JSONSerialization.data(withJSONObject: huge))
+        }
+
+        var badRegion = original
+        var regions = try #require(original["regions"] as? [[String: Any]])
+        regions[0]["maxX"] = 100_000
+        badRegion["regions"] = regions
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(Puzzle.self, from: JSONSerialization.data(withJSONObject: badRegion))
+        }
+    }
+
     @Test func rejectsNewerFormats() throws {
         let puzzle = SamplePicture.fish.makePuzzle()
         var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(puzzle)) as? [String: Any])
@@ -86,6 +105,13 @@ struct RenderingTests {
         let snapshot = try #require(PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { _ in .blank }, outputWidth: 300))
         #expect(snapshot.width == 300)
         #expect(snapshot.height == 300)
+    }
+
+    @Test func thumbnails() throws {
+        let puzzle = SamplePicture.fish.makePuzzle()
+        let thumbnail = try #require(PuzzleSnapshot.thumbnail(of: puzzle, painted: true, width: 120))
+        #expect(thumbnail.width == 120)
+        #expect(thumbnail.height == 120)
     }
 
     @Test func numbersFitTheirRegions() {

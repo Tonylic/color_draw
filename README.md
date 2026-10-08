@@ -9,20 +9,24 @@ little fingers tap or drag over the shapes to fill them in.
 - **Use any picture**: take a photo with the camera, pick one from Photos, or start with one of
   six built-in drawings (kitty, rainbow, fish, house, flower, rocket).
 - **Choose how tricky**: 🐣 *Easy* (up to 6 colors, big shapes), 🐰 *Medium* (up to 10) or
-  🦁 *Tricky* (up to 16 colors, more detail), with a live preview of the finished picture.
+  🦁 *Tricky* (up to 14 colors, more detail), with a live preview of the finished picture.
 - **Paint by number**: pick a paint pot from the palette. Every shape that takes that color is
-  striped, so kids can see where to paint. Tap a shape, or drag a finger across many shapes at
-  once. Only the right color sticks, so a picture can't be spoiled. A wrong tap wiggles the paint
-  pot that's needed.
-- **Zoom so numbers are clear**: pinch with two fingers or use the big **+ / − / fit** buttons.
+  striped in a light tint of it, so kids can see where to paint. Tap a shape, or drag a finger
+  across many shapes at once. Only the right color sticks, so a picture can't be spoiled. A wrong
+  tap wiggles the paint pot that's needed, and tapping the same shape again hands that pot over.
+- **Zoom so numbers are clear**: pinch with two fingers or use the **+ / − / fit** buttons.
   Numbers are drawn as vector text, so they stay sharp at every zoom level. Tiny numbers
-  appear as you zoom in.
-- **Get help**: the 💡 button jumps to the next shape of the chosen color and makes it pulse.
+  appear as you zoom in. Kids who can't manage two-finger panning can switch the 🖌 button to
+  ✋, so one finger moves the picture.
+- **Get help**: a spoken tip and a pulsing shape show how to start. The 💡 button jumps to the
+  next shape of the chosen color and makes it pulse. After a quiet spell it wiggles by itself,
+  and if a child stays stuck it finds a shape for them.
 - **Celebrate**: every paint stroke plays a xylophone note and makes sparkles. Finishing a color
   earns a cheer from Dotty the paint drop and moves on to the next color by itself. Finishing the
   picture brings confetti, three stars and a **Save to Photos** button.
 - **Come back later**: paintings save automatically and show up under *My Paintings* with
-  their progress.
+  their progress. The ⭐ button on a finished painting brings back its celebration and
+  **Save to Photos** button. Grown-ups can delete a painting by long-pressing it.
 
 Everything happens on the device. There's no network access, no accounts, no ads and no in-app
 purchases.

@@ -17,7 +17,7 @@ final class NumbersLayer: CATiledLayer, @unchecked Sendable {
     }
 
     /// Numbers smaller than this on screen are skipped; zooming in reveals them.
-    static let minimumReadableSize: CGFloat = 7
+    static let minimumReadableSize: CGFloat = 9
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 

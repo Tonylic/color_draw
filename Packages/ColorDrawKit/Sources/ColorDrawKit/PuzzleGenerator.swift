@@ -17,19 +17,23 @@ public struct PuzzleSettings: Hashable, Sendable {
     public var smoothingPasses: Int
     /// Palette colors closer than this (CIE76 ΔE) are merged so every number looks different.
     public var minimumColorDistance: Float
+    /// Longer side ÷ shorter side above which photos are center-cropped, so panoramas don't
+    /// become thin strips with slivers for shapes.
+    public var maximumAspectRatio: Double
 
-    public init(colorCount: Int, maxDimension: Int, minimumRegionArea: Int, minimumRegionRadius: Float, smoothingPasses: Int, minimumColorDistance: Float) {
+    public init(colorCount: Int, maxDimension: Int, minimumRegionArea: Int, minimumRegionRadius: Float, smoothingPasses: Int, minimumColorDistance: Float, maximumAspectRatio: Double = 2) {
         self.colorCount = colorCount
         self.maxDimension = maxDimension
         self.minimumRegionArea = minimumRegionArea
         self.minimumRegionRadius = minimumRegionRadius
         self.smoothingPasses = smoothingPasses
         self.minimumColorDistance = minimumColorDistance
+        self.maximumAspectRatio = maximumAspectRatio
     }
 
     public static let easy = PuzzleSettings(colorCount: 6, maxDimension: 120, minimumRegionArea: 36, minimumRegionRadius: 2.5, smoothingPasses: 3, minimumColorDistance: 18)
     public static let medium = PuzzleSettings(colorCount: 10, maxDimension: 170, minimumRegionArea: 30, minimumRegionRadius: 2.2, smoothingPasses: 3, minimumColorDistance: 14)
-    public static let hard = PuzzleSettings(colorCount: 16, maxDimension: 240, minimumRegionArea: 28, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 10)
+    public static let hard = PuzzleSettings(colorCount: 14, maxDimension: 240, minimumRegionArea: 30, minimumRegionRadius: 2.0, smoothingPasses: 2, minimumColorDistance: 11)
 }
 
 public enum PuzzleGeneratorError: Error, Equatable {
@@ -39,10 +43,26 @@ public enum PuzzleGeneratorError: Error, Equatable {
 public enum PuzzleGenerator {
     /// Builds a puzzle from any image. Safe to call from a background task.
     public static func generate(from cgImage: CGImage, settings: PuzzleSettings) throws -> Puzzle {
-        guard let image = RGBAImage(cgImage: cgImage, maxDimension: settings.maxDimension) else {
+        guard let cropped = centerCrop(cgImage, maximumAspectRatio: settings.maximumAspectRatio),
+              let image = RGBAImage(cgImage: cropped, maxDimension: settings.maxDimension) else {
             throw PuzzleGeneratorError.unreadableImage
         }
         return generate(from: image, settings: settings)
+    }
+
+    /// Trims the long sides of very wide or tall images down to `maximumAspectRatio`.
+    static func centerCrop(_ image: CGImage, maximumAspectRatio: Double) -> CGImage? {
+        let width = Double(image.width), height = Double(image.height)
+        guard width > 0, height > 0, maximumAspectRatio >= 1 else { return nil }
+        if width / height > maximumAspectRatio {
+            let cropWidth = (height * maximumAspectRatio).rounded()
+            return image.cropping(to: CGRect(x: ((width - cropWidth) / 2).rounded(), y: 0, width: cropWidth, height: height))
+        }
+        if height / width > maximumAspectRatio {
+            let cropHeight = (width * maximumAspectRatio).rounded()
+            return image.cropping(to: CGRect(x: 0, y: ((height - cropHeight) / 2).rounded(), width: width, height: cropHeight))
+        }
+        return image
     }
 
     /// Builds a puzzle from a bitmap that is already at working size.
@@ -51,8 +71,9 @@ public enum PuzzleGenerator {
         var lab = LabImage(image)
         var quantized: Quantizer.Result
         if let exact = Quantizer.exactPalette(of: image, maxColors: settings.colorCount) {
-            // Flat-color artwork: keep its colors exactly and skip photo clean-up.
-            quantized = exact
+            // Flat-color artwork: keep its colors exactly and skip photo clean-up, but still merge
+            // colors nobody could tell apart.
+            quantized = Quantizer.mergeSimilarColors(exact, image: lab, minimumDistance: settings.minimumColorDistance)
         } else {
             for _ in 0..<settings.smoothingPasses {
                 lab.applyBilateralFilter(radius: 2, sigmaSpace: 2, sigmaColor: 9)

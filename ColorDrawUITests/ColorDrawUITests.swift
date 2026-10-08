@@ -37,17 +37,19 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(marker.waitForExistence(timeout: 3))
         let needed = Int(marker.label.split(separator: " ").last ?? "") ?? 1
         let other = needed == 1 ? 2 : 1
-        app.buttons["Color \(other)"].tap()
+        pot(other).tap()
         marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertEqual(progressValue, "0 percent painted")
-        app.buttons["Color \(needed)"].tap()
+        pot(needed).tap()
 
         // Find each shape and paint it, until the picture is done.
         let celebration = app.staticTexts["You did it!"]
         var attempts = 0
-        while !celebration.exists && attempts < 80 {
+        let find = app.buttons["Find a shape to paint"]
+        // When the last shape is painted the light bulb turns into a star.
+        while find.exists && !celebration.exists && attempts < 80 {
             attempts += 1
-            app.buttons["Find a shape to paint"].tap()
+            find.tap()
             guard marker.waitForExistence(timeout: 3) else { continue }
             marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             if attempts == 6 { snapshot("03-painting") }
@@ -71,8 +73,8 @@ final class ColorDrawUITests: XCTestCase {
         let canvas = app.otherElements["Coloring picture"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         // Sweep a finger across the whole picture with every color selected in turn.
-        for color in 1...12 where app.buttons["Color \(color)"].exists {
-            app.buttons["Color \(color)"].tap()
+        for color in 1...12 where pot(color).exists {
+            pot(color).tap()
             for row in stride(from: 0.1, through: 0.9, by: 0.2) {
                 canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: row))
                     .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: row)))
@@ -99,7 +101,7 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(preview.waitForExistence(timeout: 15), "A preview should appear")
         snapshot("09-create-easy")
 
-        app.buttons["Tricky, 16 colors"].tap()
+        app.buttons["Tricky, 14 colors"].tap()
         XCTAssertTrue(preview.waitForExistence(timeout: 15))
         sleep(1)
         snapshot("10-create-tricky")
@@ -110,12 +112,41 @@ final class ColorDrawUITests: XCTestCase {
         snapshot("11-photo-puzzle")
         app.buttons["Home"].tap()
         XCTAssertTrue(app.staticTexts["My Paintings"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["My Photo"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch.exists)
+    }
+
+    func testMoveModeLetsOneFingerScroll() {
+        app.buttons["House"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        // Wait for the start tip to make way for the controls (it stays until the first paint).
+        app.buttons["Find a shape to paint"].tap()
+        let marker = app.descendants(matching: .any)["focusMarker"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 3))
+        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        let move = app.buttons["Painting"]
+        XCTAssertTrue(move.waitForExistence(timeout: 5))
+        move.tap()
+        XCTAssertTrue(app.buttons["Moving the picture"].exists)
+        let before = progressValue
+        // In move mode a one-finger drag scrolls instead of painting.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        XCTAssertEqual(progressValue, before)
+        app.buttons["Moving the picture"].tap()
+        XCTAssertTrue(app.buttons["Painting"].exists)
     }
 
     func testZoomButtons() {
         app.buttons["House"].tap()
         XCTAssertTrue(app.otherElements["Coloring picture"].waitForExistence(timeout: 10))
+        // The zoom buttons appear once the first shape is painted (a tip shows there before).
+        app.buttons["Find a shape to paint"].tap()
+        let marker = app.descendants(matching: .any)["focusMarker"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 3))
+        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 5))
         app.buttons["Zoom in"].tap()
         app.buttons["Zoom in"].tap()
         sleep(1)
@@ -124,6 +155,11 @@ final class ColorDrawUITests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// A paint pot, labelled like "Color 3, orange".
+    private func pot(_ number: Int) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Color \(number),")).firstMatch
+    }
 
     private var progressValue: String {
         app.otherElements["Progress"].value as? String ?? ""

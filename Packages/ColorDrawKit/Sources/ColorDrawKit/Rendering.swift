@@ -19,7 +19,8 @@ public struct CanvasStyle: Sendable {
     }
 
     public static let standard = CanvasStyle(
-        blank: RGBColor(hex: 0xFFFFFF),
+        // Warm paper rather than pure white, so painting a white shape visibly changes it.
+        blank: RGBColor(hex: 0xF9F6F0),
         highlightLight: RGBColor(hex: 0xE4E7F0),
         highlightDark: RGBColor(hex: 0xCDD3E2),
         outline: RGBColor(hex: 0x4C4560),
@@ -31,7 +32,8 @@ public struct CanvasStyle: Sendable {
 public enum RegionAppearance: Hashable, Sendable {
     /// Not painted yet.
     case blank
-    /// Not painted yet, and its color is the one selected: striped so children can find it.
+    /// Not painted yet, and its color is the one selected: striped (in a light tint of the
+    /// selected paint) so children can find it.
     case highlighted
     /// Painted.
     case painted(RGBColor)
@@ -44,19 +46,42 @@ public final class PaintBuffer {
     public let style: CanvasStyle
     private var pixels: [UInt32]
     private let stripePeriod: Int
+    private var stripes: (light: UInt32, dark: UInt32)
 
     public init(detail: DetailMap, style: CanvasStyle = .standard) {
         self.detail = detail
         self.style = style
         pixels = [UInt32](repeating: style.blank.pixel, count: detail.width * detail.height)
         stripePeriod = max(8, detail.scale * 2)
+        stripes = (style.highlightLight.pixel, style.highlightDark.pixel)
+    }
+
+    /// Tints the stripes of highlighted regions with the selected paint (`nil`: neutral stripes).
+    /// Takes effect on the next `render` / `update`.
+    public func setHighlightTint(_ paint: RGBColor?) {
+        if let paint, let tint = Self.stripeColors(for: paint) {
+            stripes = (tint.light.pixel, tint.dark.pixel)
+        } else {
+            stripes = (style.highlightLight.pixel, style.highlightDark.pixel)
+        }
+    }
+
+    /// Two pale tints of a paint, light enough that dark numbers stay easy to read on them.
+    /// Returns `nil` for paints too pale or gray to make a visible tint.
+    public static func stripeColors(for paint: RGBColor) -> (light: RGBColor, dark: RGBColor)? {
+        let lab = paint.lab
+        guard lab.chroma >= 18 else { return nil }
+        let scale = min(1, 34 / lab.chroma)
+        let light = LabColor(l: 93, a: lab.a * scale * 0.55, b: lab.b * scale * 0.55)
+        let dark = LabColor(l: 84, a: lab.a * scale, b: lab.b * scale)
+        return (light.rgb, dark.rgb)
     }
 
     /// Redraws every region.
     public func render(_ appearance: (Int) -> RegionAppearance) {
         let lookup = detail.bounds.indices.map { appearance($0) }
         let blank = style.blank.pixel
-        let light = style.highlightLight.pixel, dark = style.highlightDark.pixel
+        let (light, dark) = stripes
         let width = detail.width
         let period = stripePeriod
         let colors: [UInt32] = lookup.map {
@@ -86,7 +111,7 @@ public final class PaintBuffer {
         let width = detail.width
         let half = stripePeriod / 2
         let id = UInt16(region)
-        let light = style.highlightLight.pixel, dark = style.highlightDark.pixel
+        let (light, dark) = stripes
         let solid: UInt32? = switch appearance {
         case .blank: style.blank.pixel
         case .highlighted: nil
@@ -104,8 +129,9 @@ public final class PaintBuffer {
         }
     }
 
+    /// The bitmap as an opaque image (opaque, so Core Animation can draw it without blending).
     public func makeImage() -> CGImage? {
-        CGImage.make(pixels: pixels, width: detail.width, height: detail.height)
+        CGImage.make(pixels: pixels, width: detail.width, height: detail.height, alpha: .noneSkipLast)
     }
 }
 
@@ -146,7 +172,7 @@ public enum OutlineRenderer {
             let r = UInt32(color.r) * a / 255, g = UInt32(color.g) * a / 255, b = UInt32(color.b) * a / 255
             pixels[p] = r | g << 8 | b << 16 | a << 24
         }
-        return CGImage.make(pixels: pixels, width: w, height: h, premultiplied: true)
+        return CGImage.make(pixels: pixels, width: w, height: h, alpha: .premultipliedLast)
     }
 }
 
@@ -180,6 +206,18 @@ public enum NumberRenderer {
 }
 
 public enum PuzzleSnapshot {
+    /// A small picture of a puzzle, either blank (just outlines) or fully painted.
+    public static func thumbnail(of puzzle: Puzzle, painted: Bool, width: Int) -> CGImage? {
+        let scale = max(1, min(4, Int((Double(width * 2) / Double(puzzle.width)).rounded(.up))))
+        let detail = DetailMap(puzzle: puzzle, scale: scale)
+        return render(
+            puzzle: puzzle,
+            detail: detail,
+            appearance: { painted ? .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) : .blank },
+            outputWidth: width
+        )
+    }
+
     /// Renders the puzzle as it currently looks — painted regions, outlines and optionally the
     /// numbers of unpainted regions — into an image `outputWidth` pixels wide.
     public static func render(

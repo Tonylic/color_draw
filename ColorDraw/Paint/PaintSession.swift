@@ -11,8 +11,14 @@ protocol PaintCanvasControlling: AnyObject {
     func zoomToFit()
     /// Zooms to a region so its number is easy to read, and makes it pulse.
     func focus(on region: Int)
+    /// Makes a region pulse without moving the picture.
+    func point(at region: Int)
     /// The id of an unpainted region of `color` near the middle of the screen.
     func nearestUnpaintedRegion(of color: Int) -> Int?
+    /// Whether any unpainted region of `color` is on screen right now.
+    func isAnyUnpaintedRegionVisible(of color: Int) -> Bool
+    /// One finger moves the picture (instead of painting) while this is on.
+    func setMoveMode(_ isOn: Bool)
     func snapshot(width: CGFloat) -> UIImage?
 }
 
@@ -30,12 +36,20 @@ final class PaintSession {
     let detail: DetailMap
     private(set) var progress: PaintProgress
     private(set) var selectedColor: Int
-    /// Changes whenever a palette swatch should wiggle to show which color a shape needs.
-    private(set) var hint: (color: Int, token: Int)?
+    /// Per color: changes whenever that paint pot should wiggle to show it's the one a shape needs.
+    private(set) var hintTokens: [Int]
+    /// The color of the most recent hint, so the palette can scroll to it.
+    private(set) var hintedColor: Int?
     /// A short message that pops up after finishing a color.
     private(set) var cheer: Cheer?
-    /// True from the moment the last shape is painted.
+    /// Whether the "You did it!" card is showing.
     private(set) var showsCelebration = false
+    /// Changes when the child seems stuck, to make the light-bulb button wiggle.
+    private(set) var helpNudge = 0
+    /// One finger moves the picture instead of painting.
+    var isMoveMode = false {
+        didSet { canvas?.setMoveMode(isMoveMode) }
+    }
 
     @ObservationIgnored weak var canvas: PaintCanvasControlling?
     @ObservationIgnored private let store: ArtworkStore
@@ -44,6 +58,10 @@ final class PaintSession {
     @ObservationIgnored private var cheerCount = 0
     @ObservationIgnored private var hintCount = 0
     @ObservationIgnored private var hasUnsavedChanges = false
+    @ObservationIgnored private var unsavedSince: Date?
+    @ObservationIgnored private var lastActivity = Date()
+    @ObservationIgnored private var lastWrongTap: (region: Int, date: Date)?
+    @ObservationIgnored private var idleNudges = 0
 
     private static let cheers = ["Great job!", "Super!", "Wow!", "Amazing!", "You rock!", "Yay!", "So pretty!", "Brilliant!"]
 
@@ -55,18 +73,22 @@ final class PaintSession {
         let progress = PaintProgress(puzzle: puzzle, filledRegions: artwork.filledRegions)
         self.progress = progress
         selectedColor = progress.remainingByColor.firstIndex { $0 > 0 } ?? 0
+        hintTokens = [Int](repeating: 0, count: puzzle.palette.count)
     }
 
     var isComplete: Bool { progress.isComplete }
 
+    var selectedPaint: RGBColor { puzzle.palette[selectedColor] }
+
     func appearance(of region: Int) -> RegionAppearance {
         let color = puzzle.regions[region].colorIndex
         if progress.filled[region] { return .painted(puzzle.palette[color]) }
-        return color == selectedColor ? .highlighted : .blank
+        return color == selectedColor && !progress.isComplete ? .highlighted : .blank
     }
 
     func select(color: Int) {
         guard color != selectedColor, puzzle.palette.indices.contains(color) else { return }
+        noteActivity()
         selectedColor = color
         canvas?.selectionChanged()
         Haptics.select()
@@ -79,7 +101,9 @@ final class PaintSession {
     func paint(region: Int, isTap: Bool) -> Bool {
         switch progress.fill(region: region, with: selectedColor) {
         case let .filled(colorFinished, pictureFinished):
-            hasUnsavedChanges = true
+            markUnsaved()
+            noteActivity()
+            lastWrongTap = nil
             canvas?.regionPainted(region)
             SoundPlayer.shared.playPaint(colorIndex: selectedColor)
             Haptics.paint()
@@ -91,11 +115,19 @@ final class PaintSession {
             }
             return true
         case let .wrongColor(expected):
-            if isTap {
-                hintCount += 1
-                hint = (expected, hintCount)
-                SoundPlayer.shared.playOops()
-                Haptics.oops()
+            guard isTap else { return false }
+            noteActivity()
+            hintCount += 1
+            hintTokens[expected] = hintCount
+            hintedColor = expected
+            SoundPlayer.shared.playOops()
+            Haptics.oops()
+            // Tapping the same shape again soon: hand over the right paint so nobody gets stuck.
+            if let last = lastWrongTap, last.region == region, Date().timeIntervalSince(last.date) < 10 {
+                lastWrongTap = nil
+                select(color: expected)
+            } else {
+                lastWrongTap = (region, Date())
             }
             return false
         case .alreadyFilled:
@@ -110,6 +142,7 @@ final class PaintSession {
 
     func findNextShape() {
         guard !progress.isComplete else { return }
+        lastActivity = Date()
         if progress.isFinished(color: selectedColor), let next = progress.nextUnfinishedColor(after: selectedColor) {
             select(color: next)
         }
@@ -118,8 +151,44 @@ final class PaintSession {
         }
     }
 
+    /// Before the first stroke, shows where to start: the biggest shape of the selected color pulses.
+    func showStartHint() {
+        guard progress.filledCount == 0 else { return }
+        if let biggest = unpaintedRegions(of: selectedColor).max(by: { puzzle.regions[$0].labelRadius < puzzle.regions[$1].labelRadius }) {
+            canvas?.point(at: biggest)
+        }
+    }
+
+    /// The child touched the picture or a control, so they're not stuck.
+    func noteActivity() {
+        lastActivity = Date()
+        idleNudges = 0
+    }
+
+    /// Called every few seconds. After a while without painting, the help button wiggles and a
+    /// shape on screen pulses. If the child stays stuck, the picture zooms to a shape for them —
+    /// once; after that only the gentle wiggle repeats until they do something.
+    func nudgeIfIdle() {
+        guard !progress.isComplete, !showsCelebration, Date().timeIntervalSince(lastActivity) > 10 else { return }
+        lastActivity = Date()
+        idleNudges += 1
+        helpNudge += 1
+        if idleNudges == 3 {
+            findNextShape()
+        } else if idleNudges < 3, canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == true,
+                  let region = canvas?.nearestUnpaintedRegion(of: selectedColor) {
+            canvas?.point(at: region)
+        }
+    }
+
     func dismissCelebration() {
         showsCelebration = false
+    }
+
+    /// Brings back the "You did it!" card (with its Save button) for a finished painting.
+    func celebrateAgain() {
+        guard progress.isComplete else { return }
+        showsCelebration = true
     }
 
     /// The painting as it looks now, for thumbnails and saving to Photos.
@@ -132,11 +201,29 @@ final class PaintSession {
         saveTask?.cancel()
         saveTask = nil
         guard hasUnsavedChanges else { return }
-        hasUnsavedChanges = false
-        store.saveProgress(artworkID, filledRegions: progress.filledRegions, isComplete: progress.isComplete, thumbnail: snapshot(width: 360))
+        // On failure the changes stay marked unsaved, so the next save tries again.
+        if store.saveProgress(artworkID, filledRegions: progress.filledRegions, isComplete: progress.isComplete, thumbnail: snapshot(width: 360)) {
+            hasUnsavedChanges = false
+            unsavedSince = nil
+        }
     }
 
+    private func markUnsaved() {
+        hasUnsavedChanges = true
+        if unsavedSince == nil { unsavedSince = Date() }
+    }
+
+    private func unpaintedRegions(of color: Int) -> [Int] {
+        puzzle.regions.indices.filter { !progress.filled[$0] && puzzle.regions[$0].colorIndex == color }
+    }
+
+    /// Saves 1.5 s after the last stroke, but never lets more than 8 s of painting go unsaved
+    /// (a child who never pauses would otherwise keep postponing the save).
     private func scheduleSave() {
+        if let since = unsavedSince, Date().timeIntervalSince(since) > 8 {
+            saveNow()
+            return
+        }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
@@ -150,10 +237,13 @@ final class PaintSession {
         Haptics.success()
         cheerCount += 1
         showCheer(Self.cheers[cheerCount % Self.cheers.count])
-        // Hand the child the next paint pot automatically.
-        if let next = progress.nextUnfinishedColor(after: selectedColor) {
-            selectedColor = next
-            canvas?.selectionChanged()
+        // Hand the child the next paint pot automatically…
+        guard let next = progress.nextUnfinishedColor(after: selectedColor) else { return }
+        selectedColor = next
+        canvas?.selectionChanged()
+        // …and if none of its shapes are on screen, step back so the child can see them.
+        if canvas?.isAnyUnpaintedRegionVisible(of: next) == false {
+            canvas?.zoomToFit()
         }
     }
 
@@ -162,10 +252,12 @@ final class PaintSession {
         Haptics.success()
         canvas?.selectionChanged()
         canvas?.zoomToFit()
+        isMoveMode = false
         saveNow()
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(0.7))
             self?.showsCelebration = true
+            SoundPlayer.shared.say("You did it!")
         }
     }
 
@@ -173,7 +265,7 @@ final class PaintSession {
         cheer = Cheer(id: cheerCount, text: text)
         cheerTask?.cancel()
         cheerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.8))
+            try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
             self?.cheer = nil
         }

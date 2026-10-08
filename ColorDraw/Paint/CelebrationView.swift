@@ -8,6 +8,8 @@ struct CelebrationView: View {
     @State private var finished: UIImage?
     @State private var appeared = false
     @State private var saveState: SaveState = .idle
+    @State private var showPermissionHelp = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum SaveState {
         case idle, saving, saved, failed
@@ -20,78 +22,95 @@ struct CelebrationView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-            VStack(spacing: 18) {
-                Mascot(size: 96, mood: .cheering)
-                    .offset(y: 26)
-                    .zIndex(1)
-                VStack(spacing: 14) {
-                    Text("You did it!")
-                        .font(Theme.font(.largeTitle, weight: .black))
-                        .foregroundStyle(Theme.pink)
-                        .padding(.top, 18)
-                    HStack(spacing: 6) {
-                        ForEach(0..<3) { index in
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 34))
-                                .foregroundStyle(Theme.yellow)
-                                .shadow(color: Theme.orange.opacity(0.6), radius: 0, y: 3)
-                                .scaleEffect(appeared ? 1 : 0.1)
-                                .rotationEffect(.degrees(appeared ? 0 : -90))
-                                .animation(.spring(response: 0.5, dampingFraction: 0.5).delay(0.3 + Double(index) * 0.18), value: appeared)
-                        }
-                    }
-                    if let finished {
-                        Image(uiImage: finished)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.ink.opacity(0.1), lineWidth: 2))
-                            .frame(maxHeight: 260)
-                            .accessibilityLabel("Your finished painting")
-                    }
-                    VStack(spacing: 12) {
-                        Button {
-                            save()
-                        } label: {
-                            Label(saveTitle, systemImage: saveState == .saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(ChunkyButtonStyle(color: saveState == .saved ? Theme.green : Theme.blue))
-                        .disabled(saveState == .saving || saveState == .saved || finished == nil)
-
-                        HStack(spacing: 12) {
-                            Button {
-                                session.dismissCelebration()
-                            } label: {
-                                Label("Look", systemImage: "eye.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(ChunkyButtonStyle(color: Theme.purple))
-                            Button(action: onHome) {
-                                Label("Home", systemImage: "house.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(ChunkyButtonStyle(color: Theme.orange))
-                            .accessibilityIdentifier("celebrationHome")
-                        }
-                    }
-                    .padding(.top, 4)
+            GeometryReader { geometry in
+                ScrollView {
+                    card
+                        .frame(maxWidth: 440)
+                        .padding(24)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                 }
-                .padding(22)
-                .background(
-                    RoundedRectangle(cornerRadius: 34, style: .continuous)
-                        .fill(Theme.paper)
-                        .shadow(color: .black.opacity(0.2), radius: 24, y: 10)
-                )
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollIndicators(.hidden)
             }
-            .frame(maxWidth: 440)
-            .padding(24)
             .scaleEffect(appeared ? 1 : 0.6)
             .opacity(appeared ? 1 : 0)
         }
         .onAppear {
-            finished = session.snapshot(width: 900)
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.65)) { appeared = true }
+            finished = session.snapshot(width: 1600)
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.65)) { appeared = true }
+        }
+        .alert("Ask a grown-up", isPresented: $showPermissionHelp) {
+            Button("Open Settings") { AppSettings.open() }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("To save paintings, Color Draw needs permission to add to Photos. A grown-up can turn it on in Settings.")
+        }
+    }
+
+    private var card: some View {
+        VStack(spacing: 18) {
+            Mascot(size: 96, mood: .cheering)
+                .offset(y: 26)
+                .zIndex(1)
+            VStack(spacing: 14) {
+                Text("You did it!")
+                    .font(Theme.font(.largeTitle, weight: .black))
+                    .foregroundStyle(Theme.pink)
+                    .padding(.top, 18)
+                HStack(spacing: 6) {
+                    ForEach(0..<3) { index in
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 34))
+                            .foregroundStyle(Theme.yellow)
+                            .shadow(color: Theme.orange.opacity(0.6), radius: 0, y: 3)
+                            .scaleEffect(appeared || reduceMotion ? 1 : 0.1)
+                            .rotationEffect(.degrees(appeared || reduceMotion ? 0 : -90))
+                            .animation(.spring(response: 0.5, dampingFraction: 0.5).delay(0.3 + Double(index) * 0.18), value: appeared)
+                    }
+                }
+                if let finished {
+                    Image(uiImage: finished)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.ink.opacity(0.1), lineWidth: 2))
+                        .frame(maxHeight: 260)
+                        .accessibilityLabel("Your finished painting")
+                }
+                VStack(spacing: 12) {
+                    Button {
+                        save()
+                    } label: {
+                        Label(saveTitle, systemImage: saveState == .saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(ChunkyButtonStyle(color: saveState == .saved ? Theme.green : Theme.blue))
+                    .disabled(saveState == .saving || saveState == .saved || finished == nil)
+
+                    HStack(spacing: 12) {
+                        Button {
+                            session.dismissCelebration()
+                        } label: {
+                            Label("Look", systemImage: "eye.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(ChunkyButtonStyle(color: Theme.purple))
+                        Button(action: onHome) {
+                            Label("Home", systemImage: "house.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(ChunkyButtonStyle(color: Theme.orange))
+                        .accessibilityIdentifier("celebrationHome")
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .padding(22)
+            .background(
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .fill(Theme.paper)
+                    .shadow(color: .black.opacity(0.2), radius: 24, y: 10)
+            )
         }
     }
 
@@ -108,9 +127,16 @@ struct CelebrationView: View {
         guard let finished else { return }
         saveState = .saving
         Task {
-            let success = await PhotoSaver.save(finished)
-            saveState = success ? .saved : .failed
-            if success { Haptics.success() }
+            switch await PhotoSaver.save(finished) {
+            case .saved:
+                saveState = .saved
+                Haptics.success()
+            case .notAllowed:
+                saveState = .idle
+                showPermissionHelp = true
+            case .failed:
+                saveState = .failed
+            }
         }
     }
 }
@@ -129,8 +155,9 @@ struct ConfettiView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var start = Date()
-
-    private let pieces: [Piece] = (0..<90).map { _ in
+    @State private var isDone = false
+    // In @State so the pieces don't jump around whenever the parent view updates.
+    @State private var pieces: [Piece] = (0..<90).map { _ in
         Piece(
             x: .random(in: 0...1),
             delay: .random(in: 0...1.6),
@@ -143,7 +170,7 @@ struct ConfettiView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { timeline in
+        TimelineView(.animation(paused: reduceMotion || isDone)) { timeline in
             Canvas { context, size in
                 let elapsed = timeline.date.timeIntervalSince(start)
                 for piece in pieces {
@@ -161,6 +188,11 @@ struct ConfettiView: View {
                     copy.fill(RoundedRectangle(cornerRadius: 2).path(in: rect), with: .color(piece.color))
                 }
             }
+        }
+        .task {
+            // Slowest piece: last to start, falling the whole height at the lowest speed.
+            try? await Task.sleep(for: .seconds(1.6 + 1.2 / 0.18))
+            isDone = true
         }
         .accessibilityHidden(true)
     }

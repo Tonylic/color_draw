@@ -338,6 +338,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Color Draw";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.kids-games";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take a picture and Color Draw turns it into a coloring page.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save your finished paintings to Photos.";
@@ -374,6 +375,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Color Draw";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.kids-games";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take a picture and Color Draw turns it into a coloring page.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save your finished paintings to Photos.";

@@ -1,9 +1,9 @@
 import AVFoundation
 import Foundation
 
-/// Plays little synthesized sounds, so the app needs no audio files. Every paint color has its
-/// own note of a pentatonic scale, which makes painting sound like playing a xylophone; any mix
-/// of notes sounds pleasant.
+/// Plays little synthesized sounds, so the app needs no audio files. Paint colors play the notes
+/// of a pentatonic scale (repeating after ten colors), which makes painting sound like playing a
+/// xylophone; any mix of notes sounds pleasant.
 @MainActor
 final class SoundPlayer {
     static let shared = SoundPlayer()
@@ -16,10 +16,12 @@ final class SoundPlayer {
     }
 
     private let engine = AVAudioEngine()
+    private let speech = AVSpeechSynthesizer()
     private var voices: [AVAudioPlayerNode] = []
     private var nextVoice = 0
     private let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
     private var isSetUp = false
+    private var voicesAttached = false
     private var lastNote = Date.distantPast
 
     private lazy var notes: [AVAudioPCMBuffer] = {
@@ -46,6 +48,17 @@ final class SoundPlayer {
         play(notes[colorIndex % notes.count])
     }
 
+    /// Says a short phrase out loud, for children who can't read yet.
+    func say(_ text: String) {
+        guard isEnabled, setUpIfNeeded() else { return }
+        speech.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+        utterance.pitchMultiplier = 1.25
+        speech.speak(utterance)
+    }
+
     func playColorDone() { play(chime) }
     func playPictureDone() { play(fanfare) }
     func playOops() { play(oops) }
@@ -62,20 +75,30 @@ final class SoundPlayer {
         if !voice.isPlaying { voice.play() }
     }
 
+    /// Gets the audio engine going ahead of the first sound, so the first stroke doesn't stutter.
+    func prepare() {
+        guard isEnabled else { return }
+        _ = setUpIfNeeded()
+    }
+
     private func setUpIfNeeded() -> Bool {
         if isSetUp { return true }
         do {
             // Ambient: mixes with other audio and respects the silent switch.
             try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
-            for _ in 0..<6 {
-                let voice = AVAudioPlayerNode()
-                engine.attach(voice)
-                engine.connect(voice, to: engine.mainMixerNode, format: format)
-                voices.append(voice)
+            if !voicesAttached {
+                for _ in 0..<6 {
+                    let voice = AVAudioPlayerNode()
+                    engine.attach(voice)
+                    engine.connect(voice, to: engine.mainMixerNode, format: format)
+                    voices.append(voice)
+                }
+                voicesAttached = true
             }
             try engine.start()
             isSetUp = true
         } catch {
+            // Audio can be busy (say, during a phone call); try again next time.
             return false
         }
         return true

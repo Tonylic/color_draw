@@ -22,6 +22,8 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private var needsPaintUpload = false
     private var laidOutSize: CGSize = .zero
     private var lastStrokePoint: CGPoint?
+    /// The paint a drag started with; the stroke ends if the color changes underneath it.
+    private var strokeColor: Int?
     private weak var focusMarker: UIView?
 
     /// Room kept free under the picture for the zoom buttons.
@@ -30,6 +32,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// Finger "brush" radius and tap forgiveness, in screen points.
     private let brushRadius: CGFloat = 9
     private let tapForgiveness: CGFloat = 16
+    private var strokeRecognizer: UIPanGestureRecognizer!
 
     init(session: PaintSession) {
         self.session = session
@@ -49,18 +52,18 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.delaysContentTouches = false
         addSubview(scrollView)
 
-        contentView.backgroundColor = .white
-        contentView.layer.cornerRadius = 6
-        contentView.layer.masksToBounds = true
         scrollView.addSubview(contentView)
 
         for layer in [paintLayer, outlineLayer] {
             layer.contentsGravity = .resize
             layer.magnificationFilter = .linear
             layer.minificationFilter = .trilinear
+            // Rounded per layer: cheap for single-image layers, unlike masking the zooming view.
+            layer.cornerRadius = 6
+            layer.masksToBounds = true
             contentView.layer.addSublayer(layer)
         }
-        numbersLayer.contentsScale = UIScreen.main.scale
+        paintLayer.isOpaque = true
         contentView.layer.addSublayer(numbersLayer)
 
         effectsView.isUserInteractionEnabled = false
@@ -73,6 +76,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         stroke.maximumNumberOfTouches = 1
         stroke.delegate = self
         addGestureRecognizer(stroke)
+        strokeRecognizer = stroke
 
         // The picture is one accessibility element; the "Find" marker is another one beside it.
         contentView.isAccessibilityElement = true
@@ -92,6 +96,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private var puzzle: Puzzle { session.puzzle }
 
     // MARK: Layout
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        numbersLayer.contentsScale = traitCollection.displayScale
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -143,6 +152,14 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) { centerContent() }
 
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView.isTracking || scrollView.isZooming || scrollView.isDecelerating else { return }
+        // The child is moving the picture around: they're busy, not stuck. And the marker sits in
+        // screen space, so it would drift away from its shape.
+        session.noteActivity()
+        focusMarker?.removeFromSuperview()
+    }
+
     // MARK: Painting gestures
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -173,18 +190,27 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             // Start where the finger first touched, not where the drag was recognized.
             let translation = gesture.translation(in: contentView)
             let start = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
+            strokeColor = session.selectedColor
             lastStrokePoint = start
             paintStroke(from: start, to: point)
         case .changed:
-            paintStroke(from: lastStrokePoint ?? point, to: point)
+            // Finishing a color hands over the next paint; don't let the same stroke keep going
+            // with a color the child didn't choose.
+            guard let last = lastStrokePoint, strokeColor == session.selectedColor else {
+                lastStrokePoint = nil
+                return
+            }
+            paintStroke(from: last, to: point)
         default:
             lastStrokePoint = nil
+            strokeColor = nil
             return
         }
         lastStrokePoint = point
     }
 
     private func paintStroke(from start: CGPoint, to end: CGPoint) {
+        session.noteActivity()
         let radius = brushRadius / scrollView.zoomScale
         let distance = hypot(end.x - start.x, end.y - start.y)
         let steps = max(1, Int(distance / max(radius * 0.7, 0.5)))
@@ -195,6 +221,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             for region in regions(near: point, radius: radius) where !painted.contains(region) && session.canPaint(region: region) {
                 painted.insert(region)
                 session.paint(region: region, isTap: false)
+                if session.selectedColor != strokeColor { return }
             }
         }
     }
@@ -263,14 +290,31 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.setZoomScale(1, animated: true)
     }
 
+    func setMoveMode(_ isOn: Bool) {
+        // In move mode one finger scrolls the picture; taps still paint.
+        strokeRecognizer.isEnabled = !isOn
+        scrollView.panGestureRecognizer.minimumNumberOfTouches = isOn ? 1 : 2
+    }
+
+    func isAnyUnpaintedRegionVisible(of color: Int) -> Bool {
+        let visible = scrollView.convert(scrollView.bounds, to: contentView)
+        return puzzle.regions.indices.contains { region in
+            !session.progress.filled[region] && puzzle.regions[region].colorIndex == color && visible.contains(labelPoint(of: region))
+        }
+    }
+
     func focus(on region: Int) {
         let center = labelPoint(of: region)
         // Zoom in until the number is comfortably big (but never zoom out).
         let fontSize = NumberRenderer.fontSize(for: puzzle.regions[region], in: puzzle, pixelSize: contentView.bounds.width / CGFloat(puzzle.width))
         let wanted = min(scrollView.maximumZoomScale, max(scrollView.zoomScale, 30 / max(fontSize, 1)))
-        zoom(to: center, scale: wanted) { [weak self] in
-            self?.showFocusMarker(on: region)
+        zoom(to: center, scale: wanted) { [weak self] finished in
+            if finished { self?.showFocusMarker(on: region) }
         }
+    }
+
+    func point(at region: Int) {
+        showFocusMarker(on: region)
     }
 
     func nearestUnpaintedRegion(of color: Int) -> Int? {
@@ -305,6 +349,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     // MARK: Drawing
 
     private func renderAllRegions() {
+        buffer.setHighlightTint(session.selectedPaint)
         buffer.render { [session] in session.appearance(of: $0) }
         schedulePaintUpload()
     }
@@ -324,13 +369,13 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         }
     }
 
-    private func zoom(to center: CGPoint, scale: CGFloat, completion: (() -> Void)? = nil) {
+    private func zoom(to center: CGPoint, scale: CGFloat, completion: ((Bool) -> Void)? = nil) {
         let size = CGSize(width: scrollView.bounds.width / scale, height: scrollView.bounds.height / scale)
         let rect = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0) {
             self.scrollView.zoom(to: rect, animated: false)
-        } completion: { _ in
-            completion?()
+        } completion: { finished in
+            completion?(finished)
         }
     }
 
@@ -394,7 +439,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         effectsView.addSubview(marker)
         focusMarker = marker
         UIAccessibility.post(notification: .layoutChanged, argument: marker)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak marker] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + FocusMarkerView.lifetime) { [weak marker] in
             marker?.removeFromSuperview()
         }
     }
@@ -415,6 +460,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
 /// The pulsing "paint me!" ring shown by the Find button.
 private final class FocusMarkerView: UIView {
+    static let lifetime: TimeInterval = 4.2
     private let activate: () -> Void
 
     init(number: Int, activate: @escaping () -> Void) {
@@ -436,16 +482,21 @@ private final class FocusMarkerView: UIView {
         ring.opacity = 0
         layer.addSublayer(ring)
 
-        let shrink = CABasicAnimation(keyPath: "transform.scale")
-        shrink.fromValue = 1.6
-        shrink.toValue = 0.5
         let fade = CAKeyframeAnimation(keyPath: "opacity")
         fade.values = [0, 1, 1, 0]
         fade.keyTimes = [0, 0.2, 0.7, 1]
         let group = CAAnimationGroup()
-        group.animations = [shrink, fade]
-        group.duration = 0.7
-        group.repeatCount = 3
+        group.duration = 0.84
+        group.repeatCount = Float(Self.lifetime / group.duration)
+        if UIAccessibility.isReduceMotionEnabled {
+            group.animations = [fade]
+            ring.transform = CATransform3DMakeScale(0.8, 0.8, 1)
+        } else {
+            let shrink = CABasicAnimation(keyPath: "transform.scale")
+            shrink.fromValue = 1.6
+            shrink.toValue = 0.5
+            group.animations = [shrink, fade]
+        }
         ring.add(group, forKey: "pulse")
     }
 

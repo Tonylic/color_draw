@@ -55,6 +55,8 @@ struct CreatePuzzleView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var difficulty: Difficulty = .easy
     @State private var previews: [Difficulty: Preview] = [:]
+    /// Generation that is running or done, per level, so switching back and forth never repeats work.
+    @State private var generators: [Difficulty: Task<Preview?, Never>] = [:]
     @State private var isCreating = false
     @State private var showError = false
 
@@ -79,6 +81,7 @@ struct CreatePuzzleView: View {
                             Image(systemName: "xmark")
                         }
                         .buttonStyle(RoundIconButtonStyle(size: 46))
+                        .disabled(isCreating)
                         .accessibilityLabel("Close")
                     }
 
@@ -104,20 +107,27 @@ struct CreatePuzzleView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(ChunkyButtonStyle(color: Theme.pink))
-                    .disabled(previews[difficulty] == nil || isCreating)
-                    .opacity(previews[difficulty] == nil ? 0.6 : 1)
+                    .disabled(!canStart || isCreating)
+                    .opacity(canStart ? 1 : 0.6)
                 }
                 .padding(22)
                 .frame(maxWidth: 620)
                 .frame(maxWidth: .infinity)
             }
         }
+        // Don't let the sheet be swiped away halfway through saving the new painting.
+        .interactiveDismissDisabled(isCreating)
         .task(id: difficulty) { await makePreview(for: difficulty) }
         .alert("Oops!", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
+            Button("OK", role: .cancel) { dismiss() }
         } message: {
             Text("That picture didn't work. Please try another one.")
         }
+    }
+
+    /// A picture with only one shape isn't a puzzle.
+    private var canStart: Bool {
+        (previews[difficulty]?.puzzle.regions.count ?? 0) > 1
     }
 
     private var previewCard: some View {
@@ -138,12 +148,25 @@ struct CreatePuzzleView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .frame(maxHeight: 340)
+        .frame(maxHeight: 420)
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 32, style: .continuous).fill(.white).shadow(color: Theme.ink.opacity(0.12), radius: 12, y: 6))
+        .overlay(alignment: .topLeading) {
+            // The original photo, so children see what their picture will become.
+            Image(decorative: photo.image, scale: 1)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 76, height: 76)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(.white, lineWidth: 4))
+                .shadow(color: Theme.ink.opacity(0.25), radius: 6, y: 3)
+                .offset(x: -10, y: -10)
+        }
         .overlay(alignment: .bottom) {
             if let preview = previews[difficulty] {
-                Text("\(preview.puzzle.palette.count) colors · \(preview.puzzle.regions.count) shapes")
+                Text(preview.puzzle.regions.count > 1
+                     ? "\(preview.puzzle.palette.count) colors · \(preview.puzzle.regions.count) shapes"
+                     : "Not much to color here. Try another picture!")
                     .font(Theme.font(.headline))
                     .foregroundStyle(Theme.ink)
                     .padding(.horizontal, 14)
@@ -157,23 +180,21 @@ struct CreatePuzzleView: View {
 
     private func makePreview(for level: Difficulty) async {
         guard previews[level] == nil else { return }
-        let image = photo.image
-        let settings = level.settings
-        let result = await Task.detached(priority: .userInitiated) { () -> Preview? in
-            guard let puzzle = try? PuzzleGenerator.generate(from: image, settings: settings) else { return nil }
-            let detail = DetailMap(puzzle: puzzle, scale: DetailMap.recommendedScale(for: puzzle, targetLongSide: 900))
-            guard let snapshot = PuzzleSnapshot.render(
-                puzzle: puzzle,
-                detail: detail,
-                appearance: { .painted(puzzle.palette[puzzle.regions[$0].colorIndex]) },
-                outputWidth: 900
-            ) else { return nil }
-            return Preview(puzzle: puzzle, image: UIImage(cgImage: snapshot))
-        }.value
-        guard !Task.isCancelled || previews[level] == nil else { return }
+        let generator = generators[level] ?? {
+            let image = photo.image
+            let settings = level.settings
+            let task = Task.detached(priority: .userInitiated) { () -> Preview? in
+                guard let puzzle = try? PuzzleGenerator.generate(from: image, settings: settings),
+                      let snapshot = PuzzleSnapshot.thumbnail(of: puzzle, painted: true, width: 900) else { return nil }
+                return Preview(puzzle: puzzle, image: UIImage(cgImage: snapshot))
+            }
+            generators[level] = task
+            return task
+        }()
+        let result = await generator.value
         if let result {
             withAnimation { previews[level] = result }
-        } else {
+        } else if level == difficulty {
             showError = true
         }
     }
@@ -183,12 +204,12 @@ struct CreatePuzzleView: View {
         isCreating = true
         let puzzle = preview.puzzle
         Task {
-            let thumbnail = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                let detail = DetailMap(puzzle: puzzle, scale: DetailMap.recommendedScale(for: puzzle, targetLongSide: 720))
-                return PuzzleSnapshot.render(puzzle: puzzle, detail: detail, appearance: { _ in .blank }, outputWidth: 360).map(UIImage.init(cgImage:))
+            let thumbnail = await Task.detached(priority: .userInitiated) {
+                PuzzleSnapshot.thumbnail(of: puzzle, painted: false, width: 360).map(UIImage.init(cgImage:))
             }.value
+            let title = "Photo, " + Date().formatted(.dateTime.month(.abbreviated).day())
             do {
-                let artwork = try await store.create(puzzle: puzzle, title: "My Photo", level: difficulty.rawValue, sampleID: nil, thumbnail: thumbnail)
+                let artwork = try await store.create(puzzle: puzzle, title: title, level: difficulty.rawValue, sampleID: nil, thumbnail: thumbnail)
                 onCreated(artwork.id)
             } catch {
                 isCreating = false

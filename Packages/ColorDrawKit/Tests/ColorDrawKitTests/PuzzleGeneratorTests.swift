@@ -131,6 +131,34 @@ struct PuzzleGeneratorTests {
         #expect(reloaded.color(atX: 5, y: 8) == RGBColor(r: 0, g: 0, b: 255))
     }
 
+    @Test func panoramasAreCroppedToAFriendlyShape() throws {
+        let panorama = try #require(makeNoisyPhoto(width: 600, height: 60).makeCGImage())
+        let puzzle = try PuzzleGenerator.generate(from: panorama, settings: .easy)
+        expectValid(puzzle, settings: .easy)
+        #expect(Double(puzzle.width) / Double(puzzle.height) <= PuzzleSettings.easy.maximumAspectRatio + 0.05)
+        let tower = try #require(makeNoisyPhoto(width: 50, height: 400).makeCGImage())
+        let tall = try PuzzleGenerator.generate(from: tower, settings: .medium)
+        #expect(Double(tall.height) / Double(tall.width) <= 2.05)
+    }
+
+    @Test func nearlyIdenticalFlatColorsShareANumber() {
+        // A checkerboard of two colors a child could never tell apart.
+        var pixels = [UInt8](repeating: 255, count: 40 * 40 * 4)
+        for y in 0..<40 {
+            for x in 0..<40 {
+                let i = (y * 40 + x) * 4
+                let shade: UInt8 = (x + y).isMultiple(of: 2) ? 200 : 201
+                pixels[i] = shade
+                pixels[i + 1] = 100
+                pixels[i + 2] = 60
+            }
+        }
+        let puzzle = PuzzleGenerator.generate(from: RGBAImage(width: 40, height: 40, pixels: pixels), settings: .medium)
+        expectValid(puzzle)
+        #expect(puzzle.palette.count == 1)
+        #expect(puzzle.regions.count == 1)
+    }
+
     @Test(arguments: SamplePicture.allCases)
     func samplePicturesMakeGoodPuzzles(sample: SamplePicture) {
         let puzzle = sample.makePuzzle()
@@ -165,6 +193,31 @@ struct ColorTests {
     @Test func textContrast() {
         #expect(RGBColor(hex: 0xFFE066).prefersDarkText)
         #expect(!RGBColor(hex: 0x25285C).prefersDarkText)
+    }
+
+    @Test func colorNames() {
+        #expect(RGBColor(hex: 0xFFFFFF).name == "white")
+        #expect(RGBColor(hex: 0x000000).name == "black")
+        #expect(RGBColor(hex: 0xFF0000).name == "red")
+        #expect(RGBColor(hex: 0xFFD43B).name == "yellow")
+        #expect(RGBColor(hex: 0x40C057).name == "green")
+        #expect(RGBColor(hex: 0x1C3FAA).name == "dark blue")
+        #expect(RGBColor(hex: 0x845EF7).name == "purple")
+        #expect(RGBColor(hex: 0xFF8FAB).name == "pink")
+        #expect(RGBColor(hex: 0x8B5A2B).name == "brown")
+        #expect(RGBColor(hex: 0xA5D8FF).name == "light blue")
+    }
+
+    @Test func stripesStayLightEnoughForNumbers() throws {
+        for hex: UInt32 in [0xFF0000, 0x25285C, 0x40C057, 0xFFD43B, 0x845EF7, 0x8B5A2B] {
+            let stripes = try #require(PaintBuffer.stripeColors(for: RGBColor(hex: hex)))
+            // Dark ink numbers need a light background (WCAG contrast ≥ 4.5 against #5A5372).
+            let ink = CanvasStyle.standard.number.luminance
+            for stripe in [stripes.light, stripes.dark] {
+                #expect((stripe.luminance + 0.05) / (ink + 0.05) >= 4.5)
+            }
+        }
+        #expect(PaintBuffer.stripeColors(for: RGBColor(hex: 0xF1F3F5)) == nil, "Grays use neutral stripes")
     }
 
     @Test func pixelPacking() {

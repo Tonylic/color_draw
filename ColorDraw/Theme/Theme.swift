@@ -4,16 +4,20 @@ import SwiftUI
 /// Colors and type for the whole app: soft candy colors and chunky rounded letters.
 enum Theme {
     static let ink = Color(hex: 0x4C4560)
-    static let softInk = Color(hex: 0x8A82A3)
+    static let softInk = Color(hex: 0x6F6788)
     static let paper = Color(hex: 0xFFFBF5)
-    static let pink = Color(hex: 0xFF6FA8)
-    static let orange = Color(hex: 0xFF9F43)
-    static let yellow = Color(hex: 0xFFC93C)
-    static let green = Color(hex: 0x3FC380)
-    static let blue = Color(hex: 0x4D9DF7)
-    static let purple = Color(hex: 0x8E6CF7)
 
-    static let rainbow: [Color] = [pink, orange, yellow, green, blue, purple]
+    // Candy colors behind white text: deep enough for at least 3:1 contrast.
+    static let pink = Color(hex: 0xEC4D8E)
+    static let orange = Color(hex: 0xE9771A)
+    static let yellowDeep = Color(hex: 0xE5A000)
+    static let green = Color(hex: 0x1E9E5E)
+    static let blue = Color(hex: 0x2F80E4)
+    static let purple = Color(hex: 0x7B57EE)
+
+    /// Bright decoration colors (title letters, confetti, bubbles).
+    static let yellow = Color(hex: 0xFFC93C)
+    static let rainbow: [Color] = [Color(hex: 0xFF6FA8), Color(hex: 0xFF9F43), yellow, Color(hex: 0x3FC380), Color(hex: 0x4D9DF7), Color(hex: 0x8E6CF7)]
 
     static let background = LinearGradient(
         colors: [Color(hex: 0xFFF1E0), Color(hex: 0xFFE4F1), Color(hex: 0xE3EEFF)],

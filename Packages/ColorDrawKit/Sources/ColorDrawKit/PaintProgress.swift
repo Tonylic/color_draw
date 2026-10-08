@@ -16,12 +16,16 @@ public struct PaintProgress: Equatable, Sendable {
     public private(set) var filled: [Bool]
     public private(set) var remainingByColor: [Int]
     public private(set) var filledCount: Int
+    /// How many regions each color has in total.
+    public let totalByColor: [Int]
 
     public init(puzzle: Puzzle, filledRegions: some Sequence<Int> = []) {
         regionColors = puzzle.regions.map(\.colorIndex)
         filled = [Bool](repeating: false, count: puzzle.regions.count)
-        remainingByColor = [Int](repeating: 0, count: puzzle.palette.count)
-        for color in regionColors { remainingByColor[color] += 1 }
+        var totals = [Int](repeating: 0, count: puzzle.palette.count)
+        for color in regionColors { totals[color] += 1 }
+        totalByColor = totals
+        remainingByColor = totals
         filledCount = 0
         for region in filledRegions where filled.indices.contains(region) && !filled[region] {
             filled[region] = true
@@ -36,8 +40,6 @@ public struct PaintProgress: Equatable, Sendable {
     public var filledRegions: [Int] { filled.indices.filter { filled[$0] } }
 
     public func isFinished(color: Int) -> Bool { remainingByColor[color] == 0 }
-
-    public func color(of region: Int) -> Int { regionColors[region] }
 
     /// The first unfinished color after `color`, wrapping around; `nil` when everything is painted.
     public func nextUnfinishedColor(after color: Int) -> Int? {

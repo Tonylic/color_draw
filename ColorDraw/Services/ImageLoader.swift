@@ -18,18 +18,20 @@ enum ImageLoader {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
-    /// Redraws a camera photo upright (camera images carry a rotation flag) and shrinks it.
-    @MainActor
-    static func image(from photo: UIImage) -> CGImage? {
-        let longest = max(photo.size.width, photo.size.height)
-        guard longest > 0 else { return nil }
-        let scale = min(1, CGFloat(maxPixelSize) / longest)
-        let size = CGSize(width: (photo.size.width * scale).rounded(), height: (photo.size.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            photo.draw(in: CGRect(origin: .zero, size: size))
-        }.cgImage
+    /// Redraws a camera photo upright (camera images carry a rotation flag) and shrinks it,
+    /// in the background.
+    static func image(from photo: UIImage) async -> CGImage? {
+        await Task.detached(priority: .userInitiated) {
+            let longest = max(photo.size.width, photo.size.height)
+            guard longest > 0 else { return nil }
+            let scale = min(1, CGFloat(maxPixelSize) / longest)
+            let size = CGSize(width: (photo.size.width * scale).rounded(), height: (photo.size.height * scale).rounded())
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                photo.draw(in: CGRect(origin: .zero, size: size))
+            }.cgImage
+        }.value
     }
 }

@@ -62,6 +62,10 @@ struct PaintView: View {
     let onClose: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(SoundPlayer.enabledKey) private var soundEnabled = true
+    @AppStorage("startTipsSpoken") private var startTipsSpoken = 0
+    @State private var startTipExpired = false
 
     var body: some View {
         ZStack {
@@ -72,19 +76,11 @@ struct PaintView: View {
                     .padding(.bottom, 4)
                 ZStack(alignment: .bottom) {
                     PaintCanvas(session: session)
-                    zoomButtons
-                        .padding(.bottom, 8)
+                    bottomRow
+                        .frame(height: PaintCanvasView.bottomControlsHeight - 6)
+                        .padding(.bottom, 6)
                 }
                 PaletteBar(session: session)
-            }
-
-            if let cheer = session.cheer {
-                CheerBubble(text: cheer.text)
-                    .id(cheer.id)
-                    .transition(.scale(scale: 0.4).combined(with: .opacity))
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 130)
-                    .allowsHitTesting(false)
             }
 
             if session.showsCelebration {
@@ -92,16 +88,43 @@ struct PaintView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.65), value: session.cheer)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.65), value: session.cheer)
+        .animation(.easeInOut(duration: 0.25), value: showsStartTip)
         .animation(.easeInOut(duration: 0.3), value: session.showsCelebration)
+        .task {
+            SoundPlayer.shared.prepare()
+            try? await Task.sleep(for: .seconds(0.8))
+            session.showStartHint()
+            // Say the first tip out loud for children who can't read yet (only the first few times).
+            if showsStartTip && startTipsSpoken < 3 {
+                startTipsSpoken += 1
+                SoundPlayer.shared.say("Tap the stripy shapes!")
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                session.nudgeIfIdle()
+            }
+        }
+        .task {
+            // The tip gives the zoom buttons their place back after a while, painted or not.
+            try? await Task.sleep(for: .seconds(8))
+            startTipExpired = true
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.saveNow() }
         }
         .onDisappear { session.saveNow() }
     }
 
+    private var showsStartTip: Bool {
+        session.progress.filledCount == 0 && !session.isComplete && !startTipExpired
+    }
+
+    // MARK: Top bar
+
     private var topBar: some View {
-        HStack(spacing: 12) {
+        let still = reduceMotion
+        return HStack(spacing: 12) {
             Button(action: onClose) {
                 Image(systemName: "house.fill")
             }
@@ -110,28 +133,109 @@ struct PaintView: View {
 
             ProgressPill(fraction: session.progress.fraction)
 
-            Button {
-                session.findNextShape()
-            } label: {
-                Image(systemName: "lightbulb.fill")
+            if session.isComplete {
+                Button {
+                    session.celebrateAgain()
+                } label: {
+                    Image(systemName: "star.fill")
+                }
+                .buttonStyle(RoundIconButtonStyle(tint: .white, background: Theme.yellowDeep))
+                .accessibilityLabel("Celebrate and save")
+            } else {
+                Button {
+                    session.findNextShape()
+                } label: {
+                    Image(systemName: "lightbulb.fill")
+                }
+                .buttonStyle(RoundIconButtonStyle(tint: .white, background: Theme.orange))
+                .keyframeAnimator(initialValue: 1.0, trigger: session.helpNudge) { content, scale in
+                    content.scaleEffect(still ? 1 : scale)
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        SpringKeyframe(1.3, duration: 0.18)
+                        SpringKeyframe(0.9, duration: 0.15)
+                        SpringKeyframe(1.15, duration: 0.15)
+                        SpringKeyframe(1.0, duration: 0.2)
+                    }
+                }
+                .accessibilityLabel("Find a shape to paint")
             }
-            .buttonStyle(RoundIconButtonStyle(tint: .white, background: Theme.orange))
-            .accessibilityLabel("Find a shape to paint")
-            .disabled(session.isComplete)
-            .opacity(session.isComplete ? 0.4 : 1)
         }
     }
 
-    private var zoomButtons: some View {
-        HStack(spacing: 16) {
+    // MARK: Bottom row: a tip, a cheer, or the picture controls
+
+    @ViewBuilder
+    private var bottomRow: some View {
+        if let cheer = session.cheer {
+            CheerBubble(text: cheer.text)
+                .id(cheer.id)
+                .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
+                .allowsHitTesting(false)
+        } else if showsStartTip {
+            CheerBubble(text: "Tap the stripy shapes!", systemImage: "hand.tap.fill")
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        } else {
+            controls
+                .transition(.opacity)
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 4) {
+            Button {
+                session.isMoveMode.toggle()
+                Haptics.select()
+            } label: {
+                Image(systemName: session.isMoveMode ? "hand.raised.fill" : "paintbrush.pointed.fill")
+                    .foregroundStyle(session.isMoveMode ? .white : Theme.ink)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(session.isMoveMode ? Theme.blue : .clear))
+            }
+            .accessibilityLabel(session.isMoveMode ? "Moving the picture" : "Painting")
+            .accessibilityHint("Switches what dragging one finger does")
+
+            Divider().frame(height: 26).padding(.horizontal, 4)
+
             Button { session.canvas?.zoom(by: 1 / 1.8) } label: { Image(systemName: "minus") }
                 .accessibilityLabel("Zoom out")
             Button { session.canvas?.zoomToFit() } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
                 .accessibilityLabel("Show whole picture")
             Button { session.canvas?.zoom(by: 1.8) } label: { Image(systemName: "plus") }
                 .accessibilityLabel("Zoom in")
+
+            Divider().frame(height: 26).padding(.horizontal, 4)
+
+            Button {
+                soundEnabled.toggle()
+                if soundEnabled { SoundPlayer.shared.playTick() }
+            } label: {
+                Image(systemName: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+            }
+            .accessibilityLabel(soundEnabled ? "Sound on" : "Sound off")
         }
-        .buttonStyle(RoundIconButtonStyle(size: 46))
+        .buttonStyle(PillIconButtonStyle())
+        .padding(.horizontal, 8)
+        .background(
+            Capsule()
+                .fill(.white.opacity(0.94))
+                .shadow(color: Theme.ink.opacity(0.15), radius: 6, y: 3)
+        )
+        .overlay(Capsule().stroke(Theme.ink.opacity(0.12), lineWidth: 1.5))
+    }
+}
+
+/// Icon buttons inside the controls pill.
+private struct PillIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 20, weight: .heavy, design: .rounded))
+            .foregroundStyle(Theme.ink)
+            .frame(width: 46, height: 46)
+            .contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed ? 0.85 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -145,7 +249,7 @@ struct ProgressPill: View {
                 Capsule().fill(.white)
                 Capsule()
                     .fill(LinearGradient(colors: Theme.rainbow, startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(28, geometry.size.width * fraction))
+                    .frame(width: max(28, (geometry.size.width - 10) * fraction))
                     .padding(5)
                     .animation(.spring(response: 0.5, dampingFraction: 0.7), value: fraction)
                 HStack {
@@ -171,21 +275,48 @@ struct ProgressPill: View {
     }
 }
 
-/// "Great job!" speech bubble with Dotty.
+/// "Great job!" speech bubble with Dotty. Sized to fit the controls row under the picture.
 struct CheerBubble: View {
     let text: String
+    var systemImage: String?
 
     var body: some View {
-        HStack(spacing: 10) {
-            Mascot(size: 54, mood: .cheering)
+        HStack(spacing: 8) {
+            Mascot(size: 40, mood: .cheering)
             Text(text)
-                .font(Theme.font(.title))
+                .font(Theme.font(.title3))
                 .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let systemImage {
+                TappingIcon(systemImage: systemImage)
+            }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
-        .background(Capsule().fill(.white).shadow(color: Theme.ink.opacity(0.2), radius: 14, y: 6))
-        .overlay(Capsule().stroke(Theme.yellow, lineWidth: 4))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(.white).shadow(color: Theme.ink.opacity(0.2), radius: 10, y: 4))
+        .overlay(Capsule().stroke(Theme.yellow, lineWidth: 3))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// An icon that keeps "tapping" (a little press-down bounce).
+private struct TappingIcon: View {
+    let systemImage: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 24, weight: .bold))
+            .foregroundStyle(Theme.pink)
+            .scaleEffect(pressed ? 0.8 : 1.05)
+            .offset(y: pressed ? 4 : -2)
+            .onAppear {
+                guard !reduceMotion, !LaunchOptions.isUITesting else { return }
+                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { pressed = true }
+            }
+            .accessibilityHidden(true)
     }
 }
 
