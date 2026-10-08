@@ -145,6 +145,26 @@ public final class PaintBuffer {
         }
     }
 
+    /// A copy of part of the bitmap (inclusive pixel bounds, clamped to the picture), so a canvas
+    /// can refresh just the tiles a paint stroke touched instead of the whole picture.
+    public func makeImage(minX: Int, minY: Int, maxX: Int, maxY: Int) -> CGImage? {
+        let x0 = max(0, minX), y0 = max(0, minY)
+        let x1 = min(detail.width - 1, maxX), y1 = min(detail.height - 1, maxY)
+        guard x1 >= x0, y1 >= y0 else { return nil }
+        let w = x1 - x0 + 1, h = y1 - y0 + 1
+        var tile = [UInt32](repeating: 0, count: w * h)
+        let width = detail.width
+        pixels.withUnsafeBufferPointer { source in
+            tile.withUnsafeMutableBufferPointer { destination in
+                for row in 0..<h {
+                    let from = source.baseAddress! + (y0 + row) * width + x0
+                    (destination.baseAddress! + row * w).update(from: from, count: w)
+                }
+            }
+        }
+        return CGImage.make(pixels: tile, width: w, height: h, alpha: .noneSkipLast)
+    }
+
     /// The bitmap as an opaque image (opaque, so Core Animation can draw it without blending).
     public func makeImage() -> CGImage? {
         CGImage.make(pixels: pixels, width: detail.width, height: detail.height, alpha: .noneSkipLast)

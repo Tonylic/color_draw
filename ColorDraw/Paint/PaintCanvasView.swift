@@ -2,12 +2,29 @@ import ColorDrawKit
 import SwiftUI
 import UIKit
 
+/// How forgiving painting with a finger is. All values are in screen points, so they feel the
+/// same at every zoom level.
+enum PaintTouch {
+    /// Radius of the round "brush" under a finger dragging across the picture: every shape of the
+    /// selected color within it gets painted. A child's fingertip covers about 40 pt, so a 32 pt
+    /// wide brush paints what the finger visibly touches. Raise it to make swiping more forgiving.
+    static let strokeRadius: CGFloat = 16
+    /// How far a tap may land from a shape of the selected color and still paint it.
+    static let tapForgiveness: CGFloat = 16
+    /// When zoomed in, a drag that starts on a shape of another color paints whatever it crosses.
+    /// After this distance without painting, it becomes "move the picture" — unless a shape of
+    /// the selected color lies ahead in the direction the finger is heading, in which case the
+    /// child is sweeping toward it and the drag keeps painting.
+    static let moveDecisionDistance: CGFloat = 40
+}
+
 /// The zoomable picture. One finger paints (tap or drag), two fingers pinch and move. When zoomed
-/// in, a one-finger drag that starts somewhere it can't paint moves the picture instead, and in
-/// move mode every one-finger drag does.
+/// in, a one-finger drag that paints nothing moves the picture instead, and in move mode every
+/// one-finger drag does.
 ///
 /// Layers inside the zoomed content view, bottom to top:
-/// 1. `paintLayer`: the painted / blank / striped regions (a bitmap from `PaintBuffer`).
+/// 1. Paint tiles: the painted / blank / striped regions (a bitmap from `PaintBuffer`), split into
+///    tiles so painting a shape re-uploads only the few tiles it touches.
 /// 2. `outlineLayer`: smooth region borders (a bitmap made once).
 /// 3. `numbersLayer`: numbers as vector text, redrawn sharply for every zoom level.
 /// Sparkles and pulses live in `effectsView` above the scroll view, so they keep their size.
@@ -15,7 +32,11 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private let session: PaintSession
     private let scrollView = UIScrollView()
     private let contentView = UIView()
-    private let paintLayer = CALayer()
+    private let paintTilesLayer = CALayer()
+    private var paintTiles: [CALayer] = []
+    private var tileColumns = 0
+    private var dirtyTiles = IndexSet()
+    private static let tileSize = 256
     private let outlineLayer = CALayer()
     private let numbersLayer = NumbersLayer()
     private let effectsView = UIView()
@@ -26,6 +47,14 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private var lastStrokePoint: CGPoint?
     /// The paint a drag started with; the stroke ends if the color changes underneath it.
     private var strokeColor: Int?
+    /// What the current one-finger drag does.
+    private enum StrokeMode { case paint, undecided, move }
+    private var strokeMode: StrokeMode?
+    /// Screen distance an undecided drag has traveled without painting anything.
+    private var undecidedTravel: CGFloat = 0
+    /// Where the current drag started (content coordinates).
+    private var strokeStart: CGPoint?
+    private var lastSparkle = Date.distantPast
     /// Set while a one-finger drag is moving the picture rather than painting: the content
     /// offset when the drag began.
     private var panStartOffset: CGPoint?
@@ -38,9 +67,6 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     /// Room kept free under the picture for the zoom buttons.
     static let bottomControlsHeight: CGFloat = 62
 
-    /// Finger "brush" radius and tap forgiveness, in screen points.
-    private let brushRadius: CGFloat = 9
-    private let tapForgiveness: CGFloat = 16
 
     init(session: PaintSession) {
         self.session = session
@@ -62,17 +88,16 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
 
         scrollView.addSubview(contentView)
 
-        for layer in [paintLayer, outlineLayer] {
-            layer.contentsGravity = .resize
-            layer.magnificationFilter = .linear
-            layer.minificationFilter = .trilinear
-            // Rounded per layer: cheap for single-image layers, unlike masking the zooming view.
-            layer.cornerRadius = 6
-            layer.masksToBounds = true
-            contentView.layer.addSublayer(layer)
-        }
-        paintLayer.isOpaque = true
+        contentView.layer.addSublayer(paintTilesLayer)
+        outlineLayer.contentsGravity = .resize
+        outlineLayer.magnificationFilter = .linear
+        outlineLayer.minificationFilter = .trilinear
+        // Rounded per layer: cheap for single-image layers, unlike masking the zooming view.
+        outlineLayer.cornerRadius = 6
+        outlineLayer.masksToBounds = true
+        contentView.layer.addSublayer(outlineLayer)
         contentView.layer.addSublayer(numbersLayer)
+        makePaintTiles()
 
         effectsView.isUserInteractionEnabled = false
         addSubview(effectsView)
@@ -130,9 +155,10 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         scrollView.zoomScale = 1
         contentView.frame = CGRect(origin: .zero, size: size)
         scrollView.contentSize = size
-        for layer in [paintLayer, outlineLayer, numbersLayer] as [CALayer] {
+        for layer in [paintTilesLayer, outlineLayer, numbersLayer] as [CALayer] {
             layer.frame = contentView.bounds
         }
+        layoutPaintTiles()
         let pixelSize = size.width / CGFloat(puzzle.width)
         let maximumZoom = Self.maximumZoom(for: puzzle, pixelSize: pixelSize)
         scrollView.minimumZoomScale = 1
@@ -206,8 +232,7 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
             return
         }
         // Forgive slightly-off taps on small shapes: paint the closest matching shape nearby.
-        let radius = tapForgiveness / scrollView.zoomScale
-        if let nearby = regions(near: point, radius: radius).first(where: session.canPaint(region:)) {
+        if let nearby = regions(along: point, to: point, screenRadius: PaintTouch.tapForgiveness).first(where: session.canPaint(region:)) {
             session.paint(region: nearby, isTap: true)
         } else {
             session.paint(region: region, isTap: true)
@@ -217,50 +242,112 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     @objc private func handleStroke(_ gesture: UIPanGestureRecognizer) {
         // A second finger means the child is zooming, not painting.
         if gesture.numberOfTouches > 1 || scrollView.pinchGestureRecognizer?.state == .changed {
-            lastStrokePoint = nil
-            panStartOffset = nil
-            return
-        }
-        if gesture.state == .began {
-            // Catch a gliding picture first, so the finger's position is measured against what's
-            // actually on screen.
-            stopGlide()
-            // Start where the finger first touched, not where the drag was recognized.
-            let point = gesture.location(in: contentView)
-            let translation = gesture.translation(in: contentView)
-            let start = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
-            let isZoomedIn = scrollView.zoomScale > 1.05
-            let startsOnPaint = regions(near: start, radius: brushRadius / scrollView.zoomScale).contains(where: session.canPaint(region:))
-            if isMoveMode || (isZoomedIn && !startsOnPaint) {
-                panStartOffset = scrollView.contentOffset
-            }
-        }
-        if let panStartOffset {
-            movePicture(with: gesture, from: panStartOffset)
+            endStroke()
             return
         }
         let point = gesture.location(in: contentView)
         switch gesture.state {
         case .began:
+            // Catch a gliding picture first, so the finger's position is measured against what's
+            // actually on screen.
+            stopGlide()
+            // Start where the finger first touched, not where the drag was recognized.
             let translation = gesture.translation(in: contentView)
-            let start = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
+            lastStrokePoint = CGPoint(x: point.x - translation.x, y: point.y - translation.y)
+            strokeStart = lastStrokePoint
             strokeColor = session.selectedColor
-            lastStrokePoint = start
-            paintStroke(from: start, to: point)
-        case .changed:
-            // Finishing a color hands over the next paint; don't let the same stroke keep going
-            // with a color the child didn't choose.
-            guard let last = lastStrokePoint, strokeColor == session.selectedColor else {
-                lastStrokePoint = nil
-                return
+            undecidedTravel = 0
+            if isMoveMode {
+                beginMoving(gesture, keepingCurrentPosition: false)
+            } else {
+                // Zoomed out, a drag always paints. Zoomed in, it paints too, unless it turns out
+                // the child is trying to move the picture (see `continueStroke`).
+                strokeMode = scrollView.zoomScale > 1.05 ? .undecided : .paint
+                continueStroke(to: point, gesture: gesture)
             }
-            paintStroke(from: last, to: point)
+        case .changed:
+            if strokeMode == .move, let panStartOffset {
+                movePicture(with: gesture, from: panStartOffset)
+            } else {
+                continueStroke(to: point, gesture: gesture)
+            }
+        case .ended:
+            if strokeMode == .move, let panStartOffset {
+                movePicture(with: gesture, from: panStartOffset)
+            } else {
+                // Paint the last stretch too: a quick flick may have reported only one or two
+                // positions before the finger lifted.
+                continueStroke(to: point, gesture: gesture)
+            }
+            endStroke()
         default:
+            if strokeMode == .move, let panStartOffset {
+                movePicture(with: gesture, from: panStartOffset)
+            }
+            endStroke()
+        }
+    }
+
+    /// Paints everything the brush crosses from the last finger position to `point`.
+    private func continueStroke(to point: CGPoint, gesture: UIPanGestureRecognizer) {
+        // Finishing a color hands over the next paint; don't let the same stroke keep going
+        // with a color the child didn't choose.
+        guard let last = lastStrokePoint, strokeColor == session.selectedColor else {
             lastStrokePoint = nil
-            strokeColor = nil
             return
         }
+        let paintedSomething = paintStroke(from: last, to: point)
         lastStrokePoint = point
+        guard strokeMode == .undecided else { return }
+        if paintedSomething {
+            strokeMode = .paint
+        } else {
+            undecidedTravel += hypot(point.x - last.x, point.y - last.y) * scrollView.zoomScale
+            if undecidedTravel > PaintTouch.moveDecisionDistance {
+                if isPaintAhead(of: point) {
+                    strokeMode = .paint
+                } else {
+                    beginMoving(gesture, keepingCurrentPosition: true)
+                }
+            }
+        }
+    }
+
+    /// Switches the drag to moving the picture. `keepingCurrentPosition` makes the picture start
+    /// following the finger from where it is now (instead of jumping by the distance the finger
+    /// already traveled while the drag was undecided).
+    private func beginMoving(_ gesture: UIPanGestureRecognizer, keepingCurrentPosition: Bool) {
+        strokeMode = .move
+        let translation = keepingCurrentPosition ? gesture.translation(in: scrollView) : .zero
+        panStartOffset = CGPoint(x: scrollView.contentOffset.x + translation.x, y: scrollView.contentOffset.y + translation.y)
+        movePicture(with: gesture, from: panStartOffset!)
+    }
+
+    /// Whether a shape of the selected color lies on screen in the direction the finger has been
+    /// moving, within the brush's reach.
+    private func isPaintAhead(of point: CGPoint) -> Bool {
+        guard let start = strokeStart else { return false }
+        let dx = point.x - start.x, dy = point.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 0 else { return false }
+        // Follow the direction to the edge of what's visible.
+        let visible = visibleContentRect
+        var reach = CGFloat.greatestFiniteMagnitude
+        if dx > 0 { reach = min(reach, (visible.maxX - point.x) / (dx / length)) }
+        if dx < 0 { reach = min(reach, (visible.minX - point.x) / (dx / length)) }
+        if dy > 0 { reach = min(reach, (visible.maxY - point.y) / (dy / length)) }
+        if dy < 0 { reach = min(reach, (visible.minY - point.y) / (dy / length)) }
+        guard reach > 0, reach < .greatestFiniteMagnitude else { return false }
+        let end = CGPoint(x: point.x + dx / length * reach, y: point.y + dy / length * reach)
+        return regions(along: point, to: end, screenRadius: PaintTouch.strokeRadius).contains(where: session.canPaint(region:))
+    }
+
+    private func endStroke() {
+        strokeStart = nil
+        lastStrokePoint = nil
+        strokeColor = nil
+        strokeMode = nil
+        panStartOffset = nil
     }
 
     /// Scrolls the picture along with a one-finger drag, gliding a little after the finger lifts.
@@ -302,21 +389,18 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         return CGPoint(x: min(max(offset.x, -insets.left), maxX), y: min(max(offset.y, -insets.top), maxY))
     }
 
-    private func paintStroke(from start: CGPoint, to end: CGPoint) {
+    /// Paints every shape of the selected color that the brush sweeps over between two finger
+    /// positions, in the order the finger reaches them. Returns whether anything got painted.
+    @discardableResult
+    private func paintStroke(from start: CGPoint, to end: CGPoint) -> Bool {
         session.noteActivity()
-        let radius = brushRadius / scrollView.zoomScale
-        let distance = hypot(end.x - start.x, end.y - start.y)
-        let steps = max(1, Int(distance / max(radius * 0.7, 0.5)))
-        var painted = Set<Int>()
-        for step in 0...steps {
-            let t = CGFloat(step) / CGFloat(steps)
-            let point = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
-            for region in regions(near: point, radius: radius) where !painted.contains(region) && session.canPaint(region: region) {
-                painted.insert(region)
-                session.paint(region: region, isTap: false)
-                if session.selectedColor != strokeColor { return }
-            }
+        var paintedSomething = false
+        for region in regions(along: start, to: end, screenRadius: PaintTouch.strokeRadius) where session.canPaint(region: region) {
+            session.paint(region: region, isTap: false)
+            paintedSomething = true
+            if session.selectedColor != strokeColor { break }
         }
+        return paintedSomething
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -336,26 +420,15 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
         return session.detail.region(atX: p.x, y: p.y)
     }
 
-    /// Regions under a small circle, closest-first.
-    private func regions(near center: CGPoint, radius: CGFloat) -> [Int] {
-        var found: [(region: Int, distance: CGFloat)] = []
-        func probe(_ point: CGPoint, distance: CGFloat) {
-            guard let region = region(at: point) else { return }
-            if let index = found.firstIndex(where: { $0.region == region }) {
-                found[index].distance = min(found[index].distance, distance)
-            } else {
-                found.append((region, distance))
-            }
-        }
-        probe(center, distance: 0)
-        for ring in [0.5, 1.0] as [CGFloat] {
-            for step in 0..<10 {
-                let angle = CGFloat(step) / 10 * 2 * .pi
-                let r = radius * ring
-                probe(CGPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r), distance: r)
-            }
-        }
-        return found.sorted { $0.distance < $1.distance }.map(\.region)
+    /// Regions within a screen-sized radius of the path between two points (content view
+    /// coordinates), in the order the path reaches them.
+    private func regions(along start: CGPoint, to end: CGPoint, screenRadius: CGFloat) -> [Int] {
+        let scale = CGFloat(session.detail.width) / max(contentView.bounds.width, 1)
+        return session.detail.regions(
+            alongSegmentFrom: CGPoint(x: start.x * scale, y: start.y * scale),
+            to: CGPoint(x: end.x * scale, y: end.y * scale),
+            radius: screenRadius / scrollView.zoomScale * scale
+        )
     }
 
     // MARK: PaintCanvasControlling
@@ -363,10 +436,16 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     func regionPainted(_ region: Int) {
         focusMarker?.removeFromSuperview()
         buffer.update(region: region, to: session.appearance(of: region))
+        markTilesDirty(for: session.detail.bounds[region])
         numbersLayer.markFilled(region)
-        refreshVisibleColors()
+        scheduleVisibleColorsRefresh()
         schedulePaintUpload()
-        sparkle(at: region)
+        // A fast swipe can paint dozens of shapes a second; a burst of stars for each would just
+        // be clutter (and work), so sparkles are spaced out.
+        if Date().timeIntervalSince(lastSparkle) > 0.07 {
+            lastSparkle = Date()
+            sparkle(at: region)
+        }
     }
 
     func selectionChanged() {
@@ -493,20 +572,109 @@ final class PaintCanvasView: UIView, UIScrollViewDelegate, UIGestureRecognizerDe
     private func renderAllRegions() {
         buffer.setHighlightTint(session.selectedPaint)
         buffer.render { [session] in session.appearance(of: $0) }
+        dirtyTiles.insert(integersIn: 0..<paintTiles.count)
         schedulePaintUpload()
     }
 
-    /// Coalesces many region updates (e.g. during a stroke) into one bitmap upload per frame.
+    // MARK: Paint tiles
+
+    /// One layer per 256 × 256 block of the high-res picture. Each tile's image carries a
+    /// one-pixel apron from its neighbors (hidden with `contentsRect`), so smoothing at the
+    /// edges blends with the right colors and no seams show between tiles.
+    private func makePaintTiles() {
+        let detail = session.detail
+        tileColumns = (detail.width + Self.tileSize - 1) / Self.tileSize
+        let rows = (detail.height + Self.tileSize - 1) / Self.tileSize
+        paintTiles = (0..<(tileColumns * rows)).map { index in
+            let tile = CALayer()
+            tile.isOpaque = true
+            tile.contentsGravity = .resize
+            tile.magnificationFilter = .linear
+            tile.minificationFilter = .trilinear
+            // Round the picture's outer corners on the corner tiles only.
+            let column = index % tileColumns, row = index / tileColumns
+            var corners: CACornerMask = []
+            if column == 0 && row == 0 { corners.insert(.layerMinXMinYCorner) }
+            if column == tileColumns - 1 && row == 0 { corners.insert(.layerMaxXMinYCorner) }
+            if column == 0 && row == rows - 1 { corners.insert(.layerMinXMaxYCorner) }
+            if column == tileColumns - 1 && row == rows - 1 { corners.insert(.layerMaxXMaxYCorner) }
+            if !corners.isEmpty {
+                tile.cornerRadius = 6
+                tile.maskedCorners = corners
+                tile.masksToBounds = true
+            }
+            paintTilesLayer.addSublayer(tile)
+            return tile
+        }
+        dirtyTiles.insert(integersIn: 0..<paintTiles.count)
+    }
+
+    /// The pixel block a tile shows (inclusive bounds).
+    private func tilePixels(_ index: Int) -> PixelBounds {
+        let detail = session.detail
+        let column = index % tileColumns, row = index / tileColumns
+        return PixelBounds(
+            minX: column * Self.tileSize,
+            minY: row * Self.tileSize,
+            maxX: min(detail.width, (column + 1) * Self.tileSize) - 1,
+            maxY: min(detail.height, (row + 1) * Self.tileSize) - 1
+        )
+    }
+
+    private func layoutPaintTiles() {
+        let pointsPerPixel = contentView.bounds.width / CGFloat(session.detail.width)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, tile) in paintTiles.enumerated() {
+            let pixels = tilePixels(index)
+            tile.frame = CGRect(
+                x: CGFloat(pixels.minX) * pointsPerPixel,
+                y: CGFloat(pixels.minY) * pointsPerPixel,
+                width: CGFloat(pixels.maxX - pixels.minX + 1) * pointsPerPixel,
+                height: CGFloat(pixels.maxY - pixels.minY + 1) * pointsPerPixel
+            )
+        }
+        CATransaction.commit()
+    }
+
+    private func markTilesDirty(for bounds: PixelBounds) {
+        guard !bounds.isEmpty, tileColumns > 0 else { return }
+        for row in (bounds.minY / Self.tileSize)...(bounds.maxY / Self.tileSize) {
+            for column in (bounds.minX / Self.tileSize)...(bounds.maxX / Self.tileSize) {
+                dirtyTiles.insert(row * tileColumns + column)
+            }
+        }
+    }
+
+    /// Coalesces many region updates (e.g. during a stroke) into one upload per frame, of only
+    /// the tiles that changed.
     private func schedulePaintUpload() {
         guard !needsPaintUpload else { return }
         needsPaintUpload = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             needsPaintUpload = false
-            let image = buffer.makeImage()
+            let detail = session.detail
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.12)
-            paintLayer.contents = image
+            for index in dirtyTiles where paintTiles.indices.contains(index) {
+                let inner = tilePixels(index)
+                let apron = PixelBounds(
+                    minX: max(0, inner.minX - 1), minY: max(0, inner.minY - 1),
+                    maxX: min(detail.width - 1, inner.maxX + 1), maxY: min(detail.height - 1, inner.maxY + 1)
+                )
+                guard let image = buffer.makeImage(minX: apron.minX, minY: apron.minY, maxX: apron.maxX, maxY: apron.maxY) else { continue }
+                let tile = paintTiles[index]
+                tile.contents = image
+                let width = CGFloat(apron.maxX - apron.minX + 1), height = CGFloat(apron.maxY - apron.minY + 1)
+                tile.contentsRect = CGRect(
+                    x: CGFloat(inner.minX - apron.minX) / width,
+                    y: CGFloat(inner.minY - apron.minY) / height,
+                    width: CGFloat(inner.maxX - inner.minX + 1) / width,
+                    height: CGFloat(inner.maxY - inner.minY + 1) / height
+                )
+            }
+            dirtyTiles.removeAll()
             CATransaction.commit()
         }
     }

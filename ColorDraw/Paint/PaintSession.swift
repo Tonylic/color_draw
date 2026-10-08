@@ -46,6 +46,10 @@ final class PaintSession {
     private(set) var showsCelebration = false
     /// Changes when the child seems stuck, to make the light-bulb button wiggle.
     private(set) var helpNudge = 0
+    /// While the color chart is open the child is busy choosing, not stuck.
+    var isChoosingColor = false {
+        didSet { noteActivity() }
+    }
     /// Set when progress couldn't be saved (say, the device is full); cleared by the next good save.
     private(set) var saveFailed = false
     /// Colors with unpainted shapes near the middle of the screen, closest first. With big
@@ -228,11 +232,14 @@ final class PaintSession {
         idleNudges = 0
     }
 
-    /// Called every few seconds. When a child hasn't done anything for a while, help step by step:
-    /// first make sure shapes of the paint are on screen and point at one (twice), then zoom right
-    /// to one. After that only the light bulb wiggles now and then, until the child does something.
+    /// Called every few seconds. When a child hasn't done anything for a while, help step by step,
+    /// without ever yanking the picture away from what they're looking at: first the light bulb
+    /// wiggles and a shape of the paint on screen gets pointed at (twice); only if they're still
+    /// stuck after about half a minute does the picture glide to a shape for them. After that
+    /// only the bulb wiggles now and then, until the child does something.
     func nudgeIfIdle() {
-        guard !progress.isComplete, !showsCelebration, Date().timeIntervalSince(lastActivity) > 9 else { return }
+        guard !progress.isComplete, !showsCelebration, !isChoosingColor,
+              Date().timeIntervalSince(lastActivity) > 9 else { return }
         lastActivity = Date()
         idleNudges += 1
         helpNudge += 1
@@ -241,12 +248,8 @@ final class PaintSession {
         guard !UIAccessibility.isVoiceOverRunning else { return }
         switch idleNudges {
         case 1, 2:
-            if canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == false {
-                canvas?.zoomToFit()
-            }
-            Task { [weak self] in
-                guard (try? await Task.sleep(for: .seconds(0.5))) != nil,
-                      let self, let region = canvas?.nearestUnpaintedRegion(of: selectedColor) else { return }
+            if canvas?.isAnyUnpaintedRegionVisible(of: selectedColor) == true,
+               let region = canvas?.nearestUnpaintedRegion(of: selectedColor) {
                 canvas?.point(at: region)
             }
         case 3:

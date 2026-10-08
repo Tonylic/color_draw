@@ -213,6 +213,56 @@ final class ColorDrawUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Home"].exists)
     }
 
+    func testQuickSwipesPaintEveryShapeTheyCross() {
+        app.buttons["Kitty"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        let orange = pot(named: "orange")
+        XCTAssertTrue(orange.waitForExistence(timeout: 5))
+        tap(orange)
+        // Two quick flicks, edge to edge, the way a child sweeps a finger across: one through the
+        // head, one through the body.
+        for row in [0.5, 0.93] {
+            canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: row))
+                .press(forDuration: 0.01, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: row)),
+                       withVelocity: XCUIGestureVelocity(3000), thenHoldForDuration: 0)
+        }
+        XCTAssertEqual(orange.value as? String, "All done", "Every orange shape the flicks crossed is painted")
+        snapshot("16-quick-swipes")
+    }
+
+    func testZoomedInSwipeStartingOnAnotherColorStillPaints() {
+        app.buttons["Kitty"].tap()
+        let canvas = app.otherElements["Coloring picture"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
+        // Paint one shape so the tip makes way for the zoom buttons.
+        app.buttons["Find a shape to paint"].tap()
+        let marker = app.descendants(matching: .any)["focusMarker"]
+        XCTAssertTrue(marker.waitForExistence(timeout: 3))
+        marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Zoom in"].waitForExistence(timeout: 5))
+        app.buttons["Zoom in"].tap()
+        sleep(1)
+
+        // With the collar's paint, flick from the (orange) face straight down through the collar.
+        let purple = pot(named: "purple")
+        tap(purple)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.47))
+            .press(forDuration: 0.01, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)),
+                   withVelocity: XCUIGestureVelocity(3000), thenHoldForDuration: 0)
+        XCTAssertEqual(purple.value as? String, "All done", "The flick painted the collar instead of moving the picture")
+        snapshot("17-zoomed-swipe")
+
+        // A drag heading toward nothing of the chosen paint moves the picture instead.
+        let yellow = pot(named: "yellow")
+        tap(yellow)
+        let before = canvas.frame
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.2))
+            .press(forDuration: 0.05, thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.2)))
+        sleep(1)
+        XCTAssertLessThan(canvas.frame.minX, before.minX - 20, "Dragging left over the sky moved the picture left")
+    }
+
     func testMoveModeLetsOneFingerScroll() {
         app.buttons["House"].tap()
         let canvas = app.otherElements["Coloring picture"]
@@ -279,6 +329,18 @@ final class ColorDrawUITests: XCTestCase {
                 return
             }
         }
+    }
+
+    /// The paint pot of a color, found by its spoken name ("orange", "purple"…).
+    private func pot(named name: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Color ' AND label ENDSWITH %@", ", \(name)")).firstMatch
+    }
+
+    /// Taps an element at its center by coordinate (works for pots under the palette's faded edges).
+    private func tap(_ element: XCUIElement) {
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: element.frame.midX, dy: element.frame.midY))
+            .tap()
     }
 
     /// A paint pot, labelled like "Color 3, orange".

@@ -39,6 +39,7 @@ struct PaletteBar: View {
         .sheet(isPresented: $showsAllColors) {
             AllColorsSheet(session: session)
         }
+        .onChange(of: showsAllColors) { _, showing in session.isChoosingColor = showing }
     }
 
     /// The paint in hand, a hinted color, and as many of the colors nearest the middle of the

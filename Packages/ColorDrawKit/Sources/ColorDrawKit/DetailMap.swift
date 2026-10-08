@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// An inclusive rectangle of pixels.
@@ -6,6 +7,13 @@ public struct PixelBounds: Hashable, Sendable {
     public var minY: Int
     public var maxX: Int
     public var maxY: Int
+
+    public init(minX: Int, minY: Int, maxX: Int, maxY: Int) {
+        self.minX = minX
+        self.minY = minY
+        self.maxX = maxX
+        self.maxY = maxY
+    }
 
     public var isEmpty: Bool { maxX < minX || maxY < minY }
 
@@ -171,6 +179,56 @@ public struct DetailMap: Sendable {
         self.labels = labels
         self.margins = margins
         self.bounds = bounds
+    }
+
+    /// Every region within `radius` of the segment from `start` to `end` (all in high-res pixels),
+    /// in the order the segment reaches them. This is the swept area of a round brush, so a drag
+    /// finds every shape the finger brushes however fast it moves: the whole path is checked, not
+    /// just the points where touch events happened to arrive.
+    public func regions(alongSegmentFrom start: CGPoint, to end: CGPoint, radius: CGFloat) -> [Int] {
+        let r = max(radius, 0.5)
+        let dx = end.x - start.x, dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+        // Sample spacing: fine enough that no shape (the slimmest are ~16 px wide) slips between
+        // samples, coarse enough to stay cheap for big brushes.
+        let step = max(1, min(4, Int(r / 5)))
+        let minX = max(0, Int((min(start.x, end.x) - r).rounded(.down)))
+        let maxX = min(width - 1, Int((max(start.x, end.x) + r).rounded(.up)))
+        let minY = max(0, Int((min(start.y, end.y) - r).rounded(.down)))
+        let maxY = min(height - 1, Int((max(start.y, end.y) + r).rounded(.up)))
+
+        // For each region: how far along the segment it is first reached, and how close to the
+        // finger (to order shapes reached at the same moment, e.g. under a tap).
+        var firstReached: [Int: (t: CGFloat, distance: CGFloat)] = [:]
+        func visit(_ x: Int, _ y: Int, at t: CGFloat, distance: CGFloat) {
+            let id = Int(labels[y * width + x])
+            let best = firstReached[id] ?? (.infinity, .infinity)
+            if t < best.t || (t == best.t && distance < best.distance) { firstReached[id] = (t, distance) }
+        }
+        if minX <= maxX, minY <= maxY {
+            var y = minY
+            while y <= maxY {
+                var x = minX
+                while x <= maxX {
+                    let px = CGFloat(x) + 0.5, py = CGFloat(y) + 0.5
+                    // Closest point of the segment to this pixel.
+                    let t = lengthSquared > 0 ? max(0, min(1, ((px - start.x) * dx + (py - start.y) * dy) / lengthSquared)) : 0
+                    let cx = start.x + dx * t - px, cy = start.y + dy * t - py
+                    let distanceSquared = cx * cx + cy * cy
+                    if distanceSquared <= r * r { visit(x, y, at: t, distance: distanceSquared) }
+                    x += step
+                }
+                y += step
+            }
+        }
+        // The pixels right under the finger always count, whatever the sampling.
+        for (point, t) in [(start, CGFloat(0)), (end, CGFloat(1))] {
+            let x = Int(point.x.rounded(.down)), y = Int(point.y.rounded(.down))
+            if x >= 0, y >= 0, x < width, y < height { visit(x, y, at: t, distance: -1) }
+        }
+        return firstReached.sorted { lhs, rhs in
+            lhs.value.t != rhs.value.t ? lhs.value.t < rhs.value.t : lhs.value.distance < rhs.value.distance
+        }.map(\.key)
     }
 
     /// The region under a high-res pixel, or `nil` outside the picture.

@@ -129,6 +129,25 @@ struct RenderingTests {
         #expect(style.ghost(of: RGBColor(hex: 0x000000)).lab.l < style.ghost(of: RGBColor(hex: 0xFFFFFF)).lab.l)
     }
 
+    @Test func tilesMatchTheFullPicture() throws {
+        let puzzle = SamplePicture.house.makePuzzle()
+        let detail = DetailMap(puzzle: puzzle, scale: 4)
+        let buffer = PaintBuffer(detail: detail)
+        buffer.render { index in index.isMultiple(of: 2) ? .painted(puzzle.palette[puzzle.regions[index].colorIndex]) : .highlighted }
+        let full = try #require(buffer.makeImage()?.dataProvider?.data as Data?)
+        // A tile that sticks out past the right and bottom edges is clamped to the picture.
+        let tile = try #require(buffer.makeImage(minX: 250, minY: 300, maxX: 10_000, maxY: 10_000))
+        #expect(tile.width == detail.width - 250)
+        #expect(tile.height == detail.height - 300)
+        let tileData = try #require(tile.dataProvider?.data as Data?)
+        for row in [0, 17, tile.height - 1] {
+            let fullRow = full.subdata(in: ((300 + row) * detail.width + 250) * 4 ..< ((300 + row) * detail.width + detail.width) * 4)
+            let tileRow = tileData.subdata(in: row * tile.width * 4 ..< (row + 1) * tile.width * 4)
+            #expect(fullRow == tileRow)
+        }
+        #expect(buffer.makeImage(minX: 9_000, minY: 0, maxX: 9_100, maxY: 10) == nil)
+    }
+
     @Test func outlinesAndSnapshotsRender() throws {
         let puzzle = SamplePicture.rainbow.makePuzzle()
         let detail = DetailMap(puzzle: puzzle, scale: 3)

@@ -50,9 +50,13 @@ little fingers tap or drag over the shapes to fill them in.
   white page.
 - **Zoom so numbers are clear**: pinch with two fingers or use the **+ / − / fit** buttons.
   Numbers are drawn as vector text, so they stay sharp at every zoom level. Tiny numbers
-  appear as you zoom in. When zoomed in, a drag that starts on a shape you can't paint moves
-  the picture. Kids who can't manage two fingers can also switch from 🖌 to ✋, so every
-  one-finger drag moves the picture.
+  appear as you zoom in. When zoomed in, a one-finger drag that paints nothing and isn't
+  heading toward the chosen color moves the picture. Kids who can't manage two fingers can
+  also switch from 🖌 to ✋, so every one-finger drag moves the picture.
+- **Swipe to paint**: pick a color and sweep a finger across the picture. A round brush about
+  as wide as a fingertip paints every shape of that color it touches, however fast the swipe,
+  even if it starts on another color. The brush size lives in `PaintTouch.strokeRadius`
+  (`ColorDraw/Paint/PaintCanvasView.swift`).
 - **Get help**: a spoken tip and a pulsing shape show how to start. The 💡 button jumps to the
   next shape of the chosen color and makes it pulse. After a quiet spell it wiggles by itself,
   and if a child stays stuck it finds a shape for them.
